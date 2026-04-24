@@ -338,7 +338,26 @@ class KnowledgeGraphVisualizer {
     removeNode(nodeId) {
         const mesh = this.nodeMeshes.get(nodeId);
         if (mesh) {
+            if (mesh.userData && mesh.userData.label) {
+                const label = mesh.userData.label;
+                if (label.element && label.element.parentNode) {
+                    label.element.parentNode.removeChild(label.element);
+                }
+            }
+            
             this.scene.remove(mesh);
+            
+            mesh.traverse((child) => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            });
+            
             this.nodeMeshes.delete(nodeId);
         }
         this.nodes.delete(nodeId);

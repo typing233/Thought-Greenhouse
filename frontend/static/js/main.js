@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const visualizer = new KnowledgeGraphVisualizer(container);
     
     let currentMode = 'select';
+    let currentSelectedNodeId = null;
     const modeIndicator = document.getElementById('mode-indicator');
     
     const loading = document.getElementById('loading');
@@ -75,6 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     async function handleNodeSelect(nodeId) {
+        currentSelectedNodeId = nodeId;
         try {
             const result = await getNode(nodeId);
             if (result.status === 'ok') {
@@ -162,64 +164,6 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         
         detailsPanel.style.display = 'flex';
-        
-        panelContent.querySelectorAll('.related-node').forEach(el => {
-            el.addEventListener('click', () => {
-                handleNodeSelect(el.dataset.id);
-            });
-        });
-        
-        panelContent.querySelector('.action-btn.suggest')?.addEventListener('click', async (e) => {
-            const nodeId = e.target.dataset.id;
-            showLoading('正在获取扩展建议...');
-            try {
-                const result = await getSuggestions(nodeId);
-                if (result.status === 'ok') {
-                    showSuggestions(result.suggestions);
-                }
-            } catch (error) {
-                showMessage('获取建议失败', 'error');
-            } finally {
-                hideLoading();
-            }
-        });
-        
-        panelContent.querySelector('.action-btn.evolve')?.addEventListener('click', async (e) => {
-            const nodeId = e.target.dataset.id;
-            showLoading('正在分析演化...');
-            try {
-                const result = await evolveNode(nodeId);
-                if (result.status === 'ok') {
-                    showEvolution(result.evolution, result.node);
-                    if (result.node) {
-                        visualizer.updateNode(nodeId, {
-                            status: result.node.status,
-                            color: result.node.color
-                        });
-                    }
-                }
-            } catch (error) {
-                showMessage('演化分析失败', 'error');
-            } finally {
-                hideLoading();
-            }
-        });
-        
-        panelContent.querySelector('.action-btn.delete')?.addEventListener('click', async (e) => {
-            if (confirm('确定要删除这个节点吗？')) {
-                const nodeId = e.target.dataset.id;
-                try {
-                    await deleteNode(nodeId);
-                    visualizer.removeNode(nodeId);
-                    detailsPanel.style.display = 'none';
-                    selectedSection.style.display = 'none';
-                    showMessage('节点已删除', 'success');
-                    loadGraph();
-                } catch (error) {
-                    showMessage('删除失败', 'error');
-                }
-            }
-        });
     }
     
     function showSuggestions(suggestions) {
@@ -230,19 +174,26 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `).join('');
         
-        panelContent.innerHTML += `
-            <div class="node-detail-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(100, 150, 200, 0.2);">
-                <h4>💡 扩展建议</h4>
-                ${extensionsHtml || '<p style="color: #78909c;">暂无建议</p>'}
-                
-                ${suggestions.gap_analysis ? `
+        const suggestionSection = document.createElement('div');
+        suggestionSection.className = 'node-detail-section';
+        suggestionSection.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(100, 150, 200, 0.2);';
+        
+        let content = `
+            <h4>💡 扩展建议</h4>
+            ${extensionsHtml || '<p style="color: #78909c;">暂无建议</p>'}
+        `;
+        
+        if (suggestions.gap_analysis) {
+            content += `
                 <div style="margin-top: 15px;">
                     <h5 style="color: #78909c; margin-bottom: 8px;">空白分析</h5>
                     <p>${suggestions.gap_analysis}</p>
                 </div>
-                ` : ''}
-            </div>
-        `;
+            `;
+        }
+        
+        suggestionSection.innerHTML = content;
+        panelContent.appendChild(suggestionSection);
     }
     
     function showEvolution(evolution, node) {
@@ -253,25 +204,34 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `).join('');
         
-        panelContent.innerHTML += `
-            <div class="node-detail-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(100, 150, 200, 0.2);">
-                <h4>⏳ 演化分析</h4>
-                <div style="margin-bottom: 15px;">
-                    <p><strong>生长模式:</strong> ${evolution.growth_pattern}</p>
-                    <p><strong>活力:</strong> ${(evolution.current_vitality * 100).toFixed(0)}% | 
-                       <strong>枯萎风险:</strong> ${(evolution.wilting_risk * 100).toFixed(0)}%</p>
-                </div>
-                
-                ${stagesHtml ? `<h5 style="color: #78909c; margin-bottom: 8px;">演化阶段</h5>${stagesHtml}` : ''}
-                
-                ${evolution.future_potential ? `
+        const evolutionSection = document.createElement('div');
+        evolutionSection.className = 'node-detail-section';
+        evolutionSection.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(100, 150, 200, 0.2);';
+        
+        let content = `
+            <h4>⏳ 演化分析</h4>
+            <div style="margin-bottom: 15px;">
+                <p><strong>生长模式:</strong> ${evolution.growth_pattern}</p>
+                <p><strong>活力:</strong> ${(evolution.current_vitality * 100).toFixed(0)}% | 
+                   <strong>枯萎风险:</strong> ${(evolution.wilting_risk * 100).toFixed(0)}%</p>
+            </div>
+        `;
+        
+        if (stagesHtml) {
+            content += `<h5 style="color: #78909c; margin-bottom: 8px;">演化阶段</h5>${stagesHtml}`;
+        }
+        
+        if (evolution.future_potential) {
+            content += `
                 <div style="margin-top: 15px;">
                     <h5 style="color: #78909c; margin-bottom: 8px;">未来潜力</h5>
                     <p>${evolution.future_potential}</p>
                 </div>
-                ` : ''}
-            </div>
-        `;
+            `;
+        }
+        
+        evolutionSection.innerHTML = content;
+        panelContent.appendChild(evolutionSection);
     }
     
     async function handleCrossPollinate(parentA, parentB) {
@@ -324,6 +284,70 @@ document.addEventListener('DOMContentLoaded', () => {
             hideLoading();
         }
     }
+    
+    panelContent.addEventListener('click', async (e) => {
+        const target = e.target;
+        
+        if (target.classList.contains('related-node')) {
+            const nodeId = target.dataset.id;
+            handleNodeSelect(nodeId);
+            return;
+        }
+        
+        if (target.classList.contains('action-btn')) {
+            const nodeId = target.dataset.id;
+            
+            if (target.classList.contains('suggest')) {
+                showLoading('正在获取扩展建议...');
+                try {
+                    const result = await getSuggestions(nodeId);
+                    if (result.status === 'ok') {
+                        showSuggestions(result.suggestions);
+                    }
+                } catch (error) {
+                    showMessage('获取建议失败', 'error');
+                } finally {
+                    hideLoading();
+                }
+            }
+            
+            if (target.classList.contains('evolve')) {
+                showLoading('正在分析演化...');
+                try {
+                    const result = await evolveNode(nodeId);
+                    if (result.status === 'ok') {
+                        showEvolution(result.evolution, result.node);
+                        if (result.node) {
+                            visualizer.updateNode(nodeId, {
+                                status: result.node.status,
+                                color: result.node.color
+                            });
+                        }
+                    }
+                } catch (error) {
+                    showMessage('演化分析失败', 'error');
+                } finally {
+                    hideLoading();
+                }
+            }
+            
+            if (target.classList.contains('delete')) {
+                if (confirm('确定要删除这个节点吗？')) {
+                    try {
+                        await deleteNode(nodeId);
+                        visualizer.removeNode(nodeId);
+                        detailsPanel.style.display = 'none';
+                        selectedSection.style.display = 'none';
+                        currentSelectedNodeId = null;
+                        showMessage('节点已删除', 'success');
+                        loadGraph();
+                    } catch (error) {
+                        showMessage('删除失败', 'error');
+                    }
+                }
+            }
+        }
+    });
     
     document.getElementById('save-config').addEventListener('click', async () => {
         const apiKey = document.getElementById('api-key').value.trim();
@@ -382,6 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
     visualizer.onClearSelection = () => {
         detailsPanel.style.display = 'none';
         selectedSection.style.display = 'none';
+        currentSelectedNodeId = null;
     };
     
     loadGraph();
