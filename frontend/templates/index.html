@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thought Greenhouse - 动态知识花园</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FontLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+</head>
+<body>
+    <div id="app">
+        <div id="sidebar">
+            <div class="sidebar-header">
+                <h1>🌱 Thought Greenhouse</h1>
+                <p class="subtitle">动态知识花园</p>
+            </div>
+            
+            <div class="config-section">
+                <div class="section-title">
+                    <span class="icon">🔑</span>
+                    <span>AI 配置</span>
+                </div>
+                <div class="config-form">
+                    <div class="form-group">
+                        <label for="api-key">Deepseek API Key</label>
+                        <div class="input-group">
+                            <input type="password" id="api-key" placeholder="输入 API Key">
+                            <button id="save-config" class="btn-small">保存</button>
+                        </div>
+                    </div>
+                    <div id="config-status" class="status-text"></div>
+                </div>
+            </div>
+            
+            <div class="seed-section">
+                <div class="section-title">
+                    <span class="icon">🌰</span>
+                    <span>种下想法</span>
+                </div>
+                <div class="seed-form">
+                    <textarea id="idea-content" placeholder="输入你的碎片化想法..." rows="4"></textarea>
+                    <div class="form-actions">
+                        <button id="plant-seed" class="btn-primary">
+                            <span>🌱 种植种子</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tools-section">
+                <div class="section-title">
+                    <span class="icon">🔧</span>
+                    <span>工具</span>
+                </div>
+                <div class="tools-grid">
+                    <button id="select-mode" class="tool-btn active" data-mode="select">
+                        <span class="tool-icon">👆</span>
+                        <span class="tool-label">选择</span>
+                    </button>
+                    <button id="pollinate-mode" class="tool-btn" data-mode="pollinate">
+                        <span class="tool-icon">🐝</span>
+                        <span class="tool-label">授粉</span>
+                    </button>
+                    <button id="connect-mode" class="tool-btn" data-mode="connect">
+                        <span class="tool-icon">🔗</span>
+                        <span class="tool-label">连接</span>
+                    </button>
+                    <button id="evolve-mode" class="tool-btn" data-mode="evolve">
+                        <span class="tool-icon">⏳</span>
+                        <span class="tool-label">演化</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="stats-section">
+                <div class="section-title">
+                    <span class="icon">📊</span>
+                    <span>花园状态</span>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-nodes">0</div>
+                        <div class="stat-label">总种子</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-edges">0</div>
+                        <div class="stat-label">连接数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="hybrids">0</div>
+                        <div class="stat-label">杂交种</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="growing">0</div>
+                        <div class="stat-label">生长中</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="selected-section" id="selected-section" style="display: none;">
+                <div class="section-title">
+                    <span class="icon">🎯</span>
+                    <span>选中节点</span>
+                </div>
+                <div id="selected-info" class="selected-info"></div>
+            </div>
+        </div>
+        
+        <div id="canvas-container">
+            <div id="viewport-info" class="viewport-info">
+                <div id="mode-indicator" class="mode-indicator">选择模式</div>
+            </div>
+            <div id="loading" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <span id="loading-text">加载中...</span>
+            </div>
+            <div id="message" class="message" style="display: none;"></div>
+        </div>
+        
+        <div id="details-panel" class="details-panel" style="display: none;">
+            <div class="panel-header">
+                <h3 id="panel-title">节点详情</h3>
+                <button id="close-panel" class="close-btn">&times;</button>
+            </div>
+            <div class="panel-content" id="panel-content"></div>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/api.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/graph.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
