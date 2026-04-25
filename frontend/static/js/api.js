@@ -196,6 +196,8 @@ async function generateNarrative() {
     });
 }
 
+const apiGenerateNarrative = generateNarrative;
+
 async function exportMarkdown() {
     const params = userApiKey ? `?api_key=${encodeURIComponent(userApiKey)}` : '';
     return apiRequest(`/api/export/markdown${params}`);
