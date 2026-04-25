@@ -646,37 +646,44 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const result = await executeChatIntent(intent, nodeIds);
             
-            if (result.status === 'ok') {
+            if (result && result.status === 'ok') {
                 addChatMessage(result.message || '操作已完成。', 'ai');
                 
-                if (result.executed_actions) {
-                    result.executed_actions.forEach(action => {
-                        if (action.type === 'create_node' && action.node) {
-                            visualizer.addNode(action.node);
-                        } else if (action.type === 'cross_pollinate' && action.child_node) {
-                            visualizer.animateHybridEffect(action.parent_a, action.parent_b);
-                            setTimeout(() => {
-                                visualizer.addNode(action.child_node);
-                            }, 500);
-                        } else if (action.type === 'move_nodes' && action.updated_positions) {
-                            action.updated_positions.forEach(pos => {
-                                visualizer.updateNode(pos.node_id, {
-                                    x: pos.x, y: pos.y, z: pos.z
-                                });
+                const actionType = result.action || 'query';
+                
+                if (actionType === 'create_node' && result.node) {
+                    visualizer.addNode(result.node);
+                } else if (actionType === 'cross_pollinate' && result.child_node) {
+                    visualizer.animateHybridEffect(result.parent_a, result.parent_b);
+                    setTimeout(() => {
+                        visualizer.addNode(result.child_node);
+                    }, 500);
+                } else if (actionType === 'move_nodes' && result.moved_nodes) {
+                    result.moved_nodes.forEach(moved => {
+                        if (moved.new_position) {
+                            visualizer.updateNode(moved.id, {
+                                x: moved.new_position.x, 
+                                y: moved.new_position.y, 
+                                z: moved.new_position.z
                             });
-                        } else if (action.type === 'switch_climate' && action.climate) {
-                            currentClimate = action.climate;
-                            visualizer.setClimate(currentClimate.type);
-                            updateClimateIndicator(currentClimate);
-                            renderCurrentClimate(currentClimate);
                         }
                     });
+                } else if (actionType === 'switch_climate' && result.climate) {
+                    currentClimate = result.climate;
+                    visualizer.setClimate(currentClimate.type);
+                    updateClimateIndicator(currentClimate);
+                    renderCurrentClimate(currentClimate);
+                } else if (actionType === 'delete_node' && result.node_id) {
+                    visualizer.removeNode(result.node_id);
+                    addChatMessage(`已删除节点: ${result.node_title || result.node_id}`, 'ai');
+                } else if (actionType === 'focus_node' && result.node) {
+                    visualizer.focusOnNode(result.node.id);
                 }
                 
-                loadGraph();
+                setTimeout(() => loadGraph(), 100);
                 showMessage('操作执行成功', 'success');
             } else {
-                addChatMessage('执行失败: ' + (result.message || '未知错误'), 'ai');
+                addChatMessage('执行失败: ' + (result?.message || '未知错误'), 'ai');
                 showMessage('操作执行失败', 'error');
             }
         } catch (error) {
@@ -697,10 +704,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const exportFramesBtn = document.getElementById('export-frames');
         const copyBtn = document.getElementById('copy-export');
         
-        generateBtn.addEventListener('click', generateNarrative);
+        generateBtn.addEventListener('click', generateNarrativeHandler);
         playBtn.addEventListener('click', togglePlayback);
         pauseBtn.addEventListener('click', togglePlayback);
         exportMarkdownBtn.addEventListener('click', exportNarrativeMarkdown);
+        exportFramesBtn.addEventListener('click', exportSequenceFrames);
         copyBtn.addEventListener('click', copyExportedText);
         
         visualizer.onPlaybackStart = (totalSteps) => {
@@ -729,20 +737,20 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
     
-    async function generateNarrative() {
+    async function generateNarrativeHandler() {
         showLoading('正在生成叙事...');
         try {
-            const result = await generateNarrative();
+            const result = await apiGenerateNarrative();
             
-            if (result.status === 'ok') {
+            if (result && result.status === 'ok') {
                 currentNarrative = result;
                 
                 const storyContainer = document.getElementById('narrative-story');
                 const storyTitle = document.getElementById('story-title');
                 const storyContent = document.getElementById('story-content');
                 
-                storyTitle.textContent = result.narrative.title || '知识花园的故事';
-                storyContent.innerHTML = result.narrative.story.replace(/\n/g, '<br>');
+                storyTitle.textContent = result.narrative?.title || '知识花园的故事';
+                storyContent.innerHTML = (result.narrative?.story || '').replace(/\n/g, '<br>');
                 storyContainer.style.display = 'block';
                 
                 if (result.playback_commands && result.playback_commands.length > 0) {
@@ -750,7 +758,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     showMessage('叙事已生成，可点击播放按钮回放', 'success');
                 }
             } else {
-                showMessage('生成叙事失败: ' + (result.message || '未知错误'), 'error');
+                showMessage('生成叙事失败: ' + (result?.message || '未知错误'), 'error');
             }
         } catch (error) {
             showMessage('生成叙事失败: ' + error.message, 'error');
@@ -838,6 +846,89 @@ document.addEventListener('DOMContentLoaded', () => {
         exportText.select();
         document.execCommand('copy');
         showMessage('内容已复制到剪贴板', 'success');
+    }
+    
+    async function exportSequenceFrames() {
+        showLoading('正在导出序列帧...');
+        try {
+            const frames = [];
+            const canvas = visualizer.renderer?.domElement;
+            
+            if (!canvas) {
+                showMessage('无法找到渲染画布', 'error');
+                return;
+            }
+            
+            if (currentNarrative && currentNarrative.playback_commands && currentNarrative.playback_commands.length > 0) {
+                const originalPlaying = isPlaybackActive;
+                if (isPlaybackActive) {
+                    visualizer.pausePlayback();
+                }
+                
+                visualizer.saveSceneState();
+                
+                for (let i = 0; i < currentNarrative.playback_commands.length; i++) {
+                    const step = currentNarrative.playback_commands[i];
+                    visualizer.executePlaybackStep(step);
+                    
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    
+                    const dataUrl = canvas.toDataURL('image/png');
+                    frames.push({
+                        step: i + 1,
+                        total: currentNarrative.playback_commands.length,
+                        dataUrl: dataUrl,
+                        description: step.description || `步骤 ${i + 1}`
+                    });
+                }
+                
+                visualizer.restoreSceneState();
+                
+                if (originalPlaying) {
+                    visualizer.resumePlayback();
+                }
+            } else {
+                const dataUrl = canvas.toDataURL('image/png');
+                frames.push({
+                    step: 1,
+                    total: 1,
+                    dataUrl: dataUrl,
+                    description: '当前场景'
+                });
+            }
+            
+            const exportResult = document.getElementById('export-result');
+            const exportText = document.getElementById('export-text');
+            
+            if (frames.length === 1) {
+                exportText.value = `# 序列帧导出\n\n共 ${frames.length} 帧\n\n## 帧 1: ${frames[0].description}\n\n![帧 1](${frames[0].dataUrl})\n`;
+            } else {
+                let markdownContent = `# 序列帧导出\n\n共 ${frames.length} 帧\n\n`;
+                frames.forEach((frame, index) => {
+                    markdownContent += `## 帧 ${frame.step}: ${frame.description}\n\n![帧 ${frame.step}](${frame.dataUrl})\n\n---\n\n`;
+                });
+                exportText.value = markdownContent;
+            }
+            
+            exportResult.style.display = 'block';
+            
+            const downloadBtn = document.getElementById('download-export');
+            if (frames.length === 1) {
+                downloadBtn.style.display = 'inline-block';
+                downloadBtn.href = frames[0].dataUrl;
+                downloadBtn.download = `frame_${Date.now()}.png`;
+                downloadBtn.textContent = '下载图片';
+            } else {
+                downloadBtn.style.display = 'none';
+            }
+            
+            showMessage(`成功导出 ${frames.length} 帧`, 'success');
+            
+        } catch (error) {
+            showMessage('导出序列帧失败: ' + error.message, 'error');
+        } finally {
+            hideLoading();
+        }
     }
     
     panelContent.addEventListener('click', async (e) => {
