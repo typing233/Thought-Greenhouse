@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     let pendingIntent = null;
     let selectedChatNodes = [];
+    let awaitingAdditionalInput = false;
+    let awaitingInputType = null;
     
     let currentNarrative = null;
     let isPlaybackActive = false;
@@ -538,21 +540,70 @@ document.addEventListener('DOMContentLoaded', () => {
         addChatMessage(message, 'user');
         chatInput.value = '';
         
+        if (awaitingAdditionalInput && pendingIntent) {
+            if (awaitingInputType === 'create_node_content') {
+                if (!pendingIntent.parameters) {
+                    pendingIntent.parameters = {};
+                }
+                pendingIntent.parameters.content = message;
+                
+                showLoading('正在创建节点...');
+                try {
+                    const result = await executeChatIntent(pendingIntent, selectedChatNodes);
+                    
+                    if (result && result.status === 'ok') {
+                        addChatMessage(result.message || '节点已创建。', 'ai');
+                        
+                        const actionType = result.action || 'query';
+                        if (actionType === 'create_node' && result.node) {
+                            visualizer.addNode(result.node);
+                        }
+                        
+                        setTimeout(() => loadGraph(), 100);
+                        showMessage('节点创建成功', 'success');
+                    } else {
+                        addChatMessage('创建失败: ' + (result?.message || '未知错误'), 'ai');
+                    }
+                } catch (error) {
+                    addChatMessage('创建出错: ' + error.message, 'ai');
+                } finally {
+                    hideLoading();
+                }
+            }
+            
+            awaitingAdditionalInput = false;
+            awaitingInputType = null;
+            pendingIntent = null;
+            return;
+        }
+        
         showLoading('AI 正在解析意图...');
         try {
             const result = await parseChatIntent(message);
             
             if (result.status === 'ok') {
-                addChatMessage(result.intent.response, 'ai');
-                pendingIntent = result.intent;
+                const intent = result.intent;
+                addChatMessage(intent.response, 'ai');
+                pendingIntent = intent;
                 
-                if (result.intent.needs_confirmation) {
-                    showPreview(result.intent);
+                if (intent.intent === 'create_node') {
+                    const content = intent.parameters?.content || intent.extracted_entities?.content;
+                    if (!content || content.trim() === '') {
+                        addChatMessage('请告诉我这个节点的内容或想法，我会帮你种下这颗种子。', 'ai');
+                        awaitingAdditionalInput = true;
+                        awaitingInputType = 'create_node_content';
+                        hideLoading();
+                        return;
+                    }
+                }
+                
+                if (intent.needs_confirmation) {
+                    showPreview(intent);
                 } else {
-                    executeIntent(result.intent);
+                    executeIntent(intent);
                 }
             } else {
-                addChatMessage('抱歉，我无法理解您的指令。请尝试用其他方式表达。', 'ai');
+                addChatMessage('抱歉，我无法理解您的指令。请尝试用更清晰的方式表达。', 'ai');
             }
         } catch (error) {
             addChatMessage('处理您的请求时出错: ' + error.message, 'ai');
