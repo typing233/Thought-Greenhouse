@@ -11,4 +11,4 @@ class Config:
     STATIC_FOLDER = os.path.join(os.path.dirname(__file__), 'frontend', 'static')
     TEMPLATE_FOLDER = os.path.join(os.path.dirname(__file__), 'frontend', 'templates')
     CORS_ORIGINS = ['*']
-    PORT = 5000
+    PORT = 8473

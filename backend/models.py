@@ -363,3 +363,414 @@ class KnowledgeGraph:
         
         conn.close()
         return hybrids
+    
+    def _init_climate_tables(self, cursor):
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS climates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                icon TEXT DEFAULT '☀️',
+                description TEXT,
+                parameters TEXT NOT NULL,
+                is_custom INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS climate_history (
+                id TEXT PRIMARY KEY,
+                climate_id TEXT NOT NULL,
+                climate_name TEXT NOT NULL,
+                climate_type TEXT NOT NULL,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP,
+                is_active INTEGER DEFAULT 1,
+                FOREIGN KEY (climate_id) REFERENCES climates (id)
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS events (
+                id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                node_id TEXT,
+                related_node_id TEXT,
+                details TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                climate_id TEXT,
+                FOREIGN KEY (node_id) REFERENCES nodes (id),
+                FOREIGN KEY (related_node_id) REFERENCES nodes (id),
+                FOREIGN KEY (climate_id) REFERENCES climates (id)
+            )
+        ''')
+    
+    def _init_default_climates(self, cursor):
+        default_climates = [
+            {
+                'id': 'spring',
+                'name': '春季',
+                'type': 'spring',
+                'icon': '🌸',
+                'description': '万物复苏的季节，生长速度提升，杂交成功率较高',
+                'parameters': {
+                    'growth_rate_multiplier': 1.3,
+                    'hybrid_success_rate': 0.7,
+                    'wilting_rate': 0.3,
+                    'connection_discovery_rate': 0.5,
+                    'light_intensity': 0.8,
+                    'rainfall': 0.6
+                },
+                'is_custom': 0
+            },
+            {
+                'id': 'summer',
+                'name': '夏季',
+                'type': 'summer',
+                'icon': '☀️',
+                'description': '热情似火的季节，生长速度最快，但枯萎风险也增加',
+                'parameters': {
+                    'growth_rate_multiplier': 1.5,
+                    'hybrid_success_rate': 0.6,
+                    'wilting_rate': 0.5,
+                    'connection_discovery_rate': 0.4,
+                    'light_intensity': 1.0,
+                    'rainfall': 0.3
+                },
+                'is_custom': 0
+            },
+            {
+                'id': 'autumn',
+                'name': '秋季',
+                'type': 'autumn',
+                'icon': '🍂',
+                'description': '收获的季节，连接发现概率高，适合整理知识网络',
+                'parameters': {
+                    'growth_rate_multiplier': 0.8,
+                    'hybrid_success_rate': 0.8,
+                    'wilting_rate': 0.4,
+                    'connection_discovery_rate': 0.9,
+                    'light_intensity': 0.6,
+                    'rainfall': 0.4
+                },
+                'is_custom': 0
+            },
+            {
+                'id': 'winter',
+                'name': '冬季',
+                'type': 'winter',
+                'icon': '❄️',
+                'description': '休眠的季节，生长缓慢，但深度思考和关联发现增多',
+                'parameters': {
+                    'growth_rate_multiplier': 0.4,
+                    'hybrid_success_rate': 0.3,
+                    'wilting_rate': 0.7,
+                    'connection_discovery_rate': 0.7,
+                    'light_intensity': 0.3,
+                    'rainfall': 0.2
+                },
+                'is_custom': 0
+            },
+            {
+                'id': 'storm',
+                'name': '风暴',
+                'type': 'storm',
+                'icon': '🌪️',
+                'description': '动荡的气候，高风险高回报，可能产生突破性杂交',
+                'parameters': {
+                    'growth_rate_multiplier': 0.5,
+                    'hybrid_success_rate': 0.9,
+                    'wilting_rate': 0.8,
+                    'connection_discovery_rate': 0.2,
+                    'light_intensity': 0.4,
+                    'rainfall': 0.9
+                },
+                'is_custom': 0
+            },
+            {
+                'id': 'drought',
+                'name': '干旱',
+                'type': 'drought',
+                'icon': '🏜️',
+                'description': '严酷的环境，只有最强的想法才能存活',
+                'parameters': {
+                    'growth_rate_multiplier': 0.2,
+                    'hybrid_success_rate': 0.2,
+                    'wilting_rate': 0.9,
+                    'connection_discovery_rate': 0.1,
+                    'light_intensity': 1.0,
+                    'rainfall': 0.1
+                },
+                'is_custom': 0
+            }
+        ]
+        
+        for climate in default_climates:
+            cursor.execute('''
+                INSERT OR IGNORE INTO climates 
+                (id, name, type, icon, description, parameters, is_custom, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                climate['id'],
+                climate['name'],
+                climate['type'],
+                climate['icon'],
+                climate['description'],
+                json.dumps(climate['parameters']),
+                climate['is_custom'],
+                datetime.now().isoformat()
+            ))
+    
+    def get_all_climates(self) -> List[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        self._init_climate_tables(cursor)
+        self._init_default_climates(cursor)
+        conn.commit()
+        
+        cursor.execute('SELECT id, name, type, icon, description, parameters, is_custom FROM climates ORDER BY is_custom, id')
+        
+        climates = []
+        for row in cursor.fetchall():
+            climates.append({
+                'id': row[0],
+                'name': row[1],
+                'type': row[2],
+                'icon': row[3],
+                'description': row[4],
+                'parameters': json.loads(row[5]) if row[5] else {},
+                'is_custom': bool(row[6])
+            })
+        
+        conn.close()
+        return climates
+    
+    def get_climate(self, climate_id: str) -> Optional[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id, name, type, icon, description, parameters, is_custom FROM climates WHERE id = ?', (climate_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                'id': row[0],
+                'name': row[1],
+                'type': row[2],
+                'icon': row[3],
+                'description': row[4],
+                'parameters': json.loads(row[5]) if row[5] else {},
+                'is_custom': bool(row[6])
+            }
+        return None
+    
+    def get_current_climate(self) -> Optional[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        self._init_climate_tables(cursor)
+        self._init_default_climates(cursor)
+        conn.commit()
+        
+        cursor.execute('''
+            SELECT ch.climate_id, c.name, c.type, c.icon, c.description, c.parameters, ch.started_at
+            FROM climate_history ch
+            JOIN climates c ON ch.climate_id = c.id
+            WHERE ch.is_active = 1
+            ORDER BY ch.started_at DESC
+            LIMIT 1
+        ''')
+        
+        row = cursor.fetchone()
+        
+        if row:
+            result = {
+                'id': row[0],
+                'name': row[1],
+                'type': row[2],
+                'icon': row[3],
+                'description': row[4],
+                'parameters': json.loads(row[5]) if row[5] else {},
+                'started_at': row[6]
+            }
+            conn.close()
+            return result
+        
+        cursor.execute('SELECT id, name, type, icon, description, parameters FROM climates WHERE id = ?', ('spring',))
+        row = cursor.fetchone()
+        
+        if row:
+            climate_data = {
+                'id': row[0],
+                'name': row[1],
+                'type': row[2],
+                'icon': row[3],
+                'description': row[4],
+                'parameters': json.loads(row[5]) if row[5] else {}
+            }
+            
+            import uuid
+            cursor.execute('''
+                INSERT INTO climate_history (id, climate_id, climate_name, climate_type, started_at, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            ''', (
+                str(uuid.uuid4()),
+                climate_data['id'],
+                climate_data['name'],
+                climate_data['type'],
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+            
+            climate_data['started_at'] = datetime.now().isoformat()
+            conn.close()
+            return climate_data
+        
+        conn.close()
+        return None
+    
+    def switch_climate(self, climate_id: str) -> bool:
+        climate = self.get_climate(climate_id)
+        if not climate:
+            return False
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('UPDATE climate_history SET is_active = 0, ended_at = ? WHERE is_active = 1', (datetime.now().isoformat(),))
+        
+        import uuid
+        cursor.execute('''
+            INSERT INTO climate_history (id, climate_id, climate_name, climate_type, started_at, is_active)
+            VALUES (?, ?, ?, ?, ?, 1)
+        ''', (
+            str(uuid.uuid4()),
+            climate['id'],
+            climate['name'],
+            climate['type'],
+            datetime.now().isoformat()
+        ))
+        
+        self._add_event(conn, 'climate_changed', None, None, {
+            'climate_id': climate['id'],
+            'climate_name': climate['name'],
+            'climate_type': climate['type']
+        }, climate['id'])
+        
+        conn.commit()
+        conn.close()
+        return True
+    
+    def get_climate_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, climate_id, climate_name, climate_type, started_at, ended_at, is_active
+            FROM climate_history
+            ORDER BY started_at DESC
+            LIMIT ?
+        ''', (limit,))
+        
+        history = []
+        for row in cursor.fetchall():
+            history.append({
+                'id': row[0],
+                'climate_id': row[1],
+                'climate_name': row[2],
+                'climate_type': row[3],
+                'started_at': row[4],
+                'ended_at': row[5],
+                'is_active': bool(row[6])
+            })
+        
+        conn.close()
+        return history
+    
+    def _add_event(self, conn, event_type: str, node_id: str = None, related_node_id: str = None, details: Dict = None, climate_id: str = None):
+        import uuid
+        cursor = conn.cursor()
+        
+        current_climate = self.get_current_climate() if not climate_id else {'id': climate_id}
+        climate_id_to_use = climate_id or (current_climate['id'] if current_climate else None)
+        
+        cursor.execute('''
+            INSERT INTO events (id, event_type, node_id, related_node_id, details, timestamp, climate_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            str(uuid.uuid4()),
+            event_type,
+            node_id,
+            related_node_id,
+            json.dumps(details) if details else None,
+            datetime.now().isoformat(),
+            climate_id_to_use
+        ))
+    
+    def record_event(self, event_type: str, node_id: str = None, related_node_id: str = None, details: Dict = None):
+        conn = sqlite3.connect(self.db_path)
+        self._add_event(conn, event_type, node_id, related_node_id, details)
+        conn.commit()
+        conn.close()
+    
+    def get_all_events(self, limit: int = 100) -> List[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT e.id, e.event_type, e.node_id, e.related_node_id, e.details, e.timestamp, e.climate_id,
+                   n1.title as node_title, n2.title as related_node_title
+            FROM events e
+            LEFT JOIN nodes n1 ON e.node_id = n1.id
+            LEFT JOIN nodes n2 ON e.related_node_id = n2.id
+            ORDER BY e.timestamp ASC
+            LIMIT ?
+        ''', (limit,))
+        
+        events = []
+        for row in cursor.fetchall():
+            events.append({
+                'id': row[0],
+                'event_type': row[1],
+                'node_id': row[2],
+                'related_node_id': row[3],
+                'details': json.loads(row[4]) if row[4] else {},
+                'timestamp': row[5],
+                'climate_id': row[6],
+                'node_title': row[7],
+                'related_node_title': row[8]
+            })
+        
+        conn.close()
+        return events
+    
+    def get_events_by_type(self, event_type: str, limit: int = 50) -> List[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, event_type, node_id, related_node_id, details, timestamp, climate_id
+            FROM events
+            WHERE event_type = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (event_type, limit))
+        
+        events = []
+        for row in cursor.fetchall():
+            events.append({
+                'id': row[0],
+                'event_type': row[1],
+                'node_id': row[2],
+                'related_node_id': row[3],
+                'details': json.loads(row[4]) if row[4] else {},
+                'timestamp': row[5],
+                'climate_id': row[6]
+            })
+        
+        conn.close()
+        return events

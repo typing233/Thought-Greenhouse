@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thought Greenhouse - 动态知识花园</title>
+    <title>Thought Greenhouse v2.0 - 动态知识花园</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -15,103 +15,259 @@
         <div id="sidebar">
             <div class="sidebar-header">
                 <h1>🌱 Thought Greenhouse</h1>
-                <p class="subtitle">动态知识花园</p>
+                <p class="subtitle">动态知识花园 v2.0</p>
             </div>
             
-            <div class="config-section">
-                <div class="section-title">
-                    <span class="icon">🔑</span>
-                    <span>AI 配置</span>
+            <div class="tab-buttons">
+                <button class="tab-btn active" data-tab="main">🏠 主面板</button>
+                <button class="tab-btn" data-tab="chat">💬 对话控制</button>
+                <button class="tab-btn" data-tab="climate">🌤️ 气候系统</button>
+                <button class="tab-btn" data-tab="narrative">📖 叙事回放</button>
+            </div>
+            
+            <div id="tab-main" class="tab-content active">
+                <div class="config-section">
+                    <div class="section-title">
+                        <span class="icon">🔑</span>
+                        <span>AI 配置</span>
+                    </div>
+                    <div class="config-form">
+                        <div class="form-group">
+                            <label for="api-key">Deepseek API Key</label>
+                            <div class="input-group">
+                                <input type="password" id="api-key" placeholder="输入 API Key">
+                                <button id="save-config" class="btn-small">保存</button>
+                            </div>
+                        </div>
+                        <div id="config-status" class="status-text"></div>
+                    </div>
                 </div>
-                <div class="config-form">
-                    <div class="form-group">
-                        <label for="api-key">Deepseek API Key</label>
-                        <div class="input-group">
-                            <input type="password" id="api-key" placeholder="输入 API Key">
-                            <button id="save-config" class="btn-small">保存</button>
+                
+                <div class="seed-section">
+                    <div class="section-title">
+                        <span class="icon">🌰</span>
+                        <span>种下想法</span>
+                    </div>
+                    <div class="seed-form">
+                        <textarea id="idea-content" placeholder="输入你的碎片化想法..." rows="4"></textarea>
+                        <div class="form-actions">
+                            <button id="plant-seed" class="btn-primary">
+                                <span>🌱 种植种子</span>
+                            </button>
                         </div>
                     </div>
-                    <div id="config-status" class="status-text"></div>
                 </div>
-            </div>
-            
-            <div class="seed-section">
-                <div class="section-title">
-                    <span class="icon">🌰</span>
-                    <span>种下想法</span>
-                </div>
-                <div class="seed-form">
-                    <textarea id="idea-content" placeholder="输入你的碎片化想法..." rows="4"></textarea>
-                    <div class="form-actions">
-                        <button id="plant-seed" class="btn-primary">
-                            <span>🌱 种植种子</span>
+                
+                <div class="tools-section">
+                    <div class="section-title">
+                        <span class="icon">🔧</span>
+                        <span>工具</span>
+                    </div>
+                    <div class="tools-grid">
+                        <button id="select-mode" class="tool-btn active" data-mode="select">
+                            <span class="tool-icon">👆</span>
+                            <span class="tool-label">选择</span>
+                        </button>
+                        <button id="pollinate-mode" class="tool-btn" data-mode="pollinate">
+                            <span class="tool-icon">🐝</span>
+                            <span class="tool-label">授粉</span>
+                        </button>
+                        <button id="connect-mode" class="tool-btn" data-mode="connect">
+                            <span class="tool-icon">🔗</span>
+                            <span class="tool-label">连接</span>
+                        </button>
+                        <button id="evolve-mode" class="tool-btn" data-mode="evolve">
+                            <span class="tool-icon">⏳</span>
+                            <span class="tool-label">演化</span>
                         </button>
                     </div>
                 </div>
-            </div>
-            
-            <div class="tools-section">
-                <div class="section-title">
-                    <span class="icon">🔧</span>
-                    <span>工具</span>
+                
+                <div class="stats-section">
+                    <div class="section-title">
+                        <span class="icon">📊</span>
+                        <span>花园状态</span>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="total-nodes">0</div>
+                            <div class="stat-label">总种子</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="total-edges">0</div>
+                            <div class="stat-label">连接数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="hybrids">0</div>
+                            <div class="stat-label">杂交种</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="growing">0</div>
+                            <div class="stat-label">生长中</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="tools-grid">
-                    <button id="select-mode" class="tool-btn active" data-mode="select">
-                        <span class="tool-icon">👆</span>
-                        <span class="tool-label">选择</span>
-                    </button>
-                    <button id="pollinate-mode" class="tool-btn" data-mode="pollinate">
-                        <span class="tool-icon">🐝</span>
-                        <span class="tool-label">授粉</span>
-                    </button>
-                    <button id="connect-mode" class="tool-btn" data-mode="connect">
-                        <span class="tool-icon">🔗</span>
-                        <span class="tool-label">连接</span>
-                    </button>
-                    <button id="evolve-mode" class="tool-btn" data-mode="evolve">
-                        <span class="tool-icon">⏳</span>
-                        <span class="tool-label">演化</span>
-                    </button>
-                </div>
-            </div>
-            
-            <div class="stats-section">
-                <div class="section-title">
-                    <span class="icon">📊</span>
-                    <span>花园状态</span>
-                </div>
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-value" id="total-nodes">0</div>
-                        <div class="stat-label">总种子</div>
+                
+                <div class="selected-section" id="selected-section" style="display: none;">
+                    <div class="section-title">
+                        <span class="icon">🎯</span>
+                        <span>选中节点</span>
                     </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="total-edges">0</div>
-                        <div class="stat-label">连接数</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="hybrids">0</div>
-                        <div class="stat-label">杂交种</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="growing">0</div>
-                        <div class="stat-label">生长中</div>
-                    </div>
+                    <div id="selected-info" class="selected-info"></div>
                 </div>
             </div>
             
-            <div class="selected-section" id="selected-section" style="display: none;">
-                <div class="section-title">
-                    <span class="icon">🎯</span>
-                    <span>选中节点</span>
+            <div id="tab-chat" class="tab-content">
+                <div class="chat-section">
+                    <div class="section-title">
+                        <span class="icon">💬</span>
+                        <span>对话式控制</span>
+                    </div>
+                    <div class="chat-hints">
+                        <p>💡 尝试说：</p>
+                        <div class="hint-chips">
+                            <span class="hint-chip">把关于设计的种子杂交一下</span>
+                            <span class="hint-chip">把这三个节点移到一起</span>
+                            <span class="hint-chip">切换到夏季</span>
+                            <span class="hint-chip">创建一个关于AI的想法</span>
+                        </div>
+                    </div>
+                    <div id="chat-messages" class="chat-messages"></div>
+                    <div class="chat-input-area">
+                        <textarea id="chat-input" placeholder="输入自然语言指令..." rows="2"></textarea>
+                        <div class="chat-actions">
+                            <button id="chat-send" class="btn-primary">发送</button>
+                        </div>
+                    </div>
+                    <div id="chat-preview" class="chat-preview" style="display: none;">
+                        <div class="preview-header">
+                            <span class="icon">👁️</span>
+                            <span>操作预览</span>
+                        </div>
+                        <div id="preview-content" class="preview-content"></div>
+                        <div class="preview-actions">
+                            <button id="preview-cancel" class="btn-small btn-secondary">取消</button>
+                            <button id="preview-confirm" class="btn-small">确认执行</button>
+                        </div>
+                    </div>
                 </div>
-                <div id="selected-info" class="selected-info"></div>
+            </div>
+            
+            <div id="tab-climate" class="tab-content">
+                <div class="climate-section">
+                    <div class="section-title">
+                        <span class="icon">🌤️</span>
+                        <span>当前气候</span>
+                    </div>
+                    <div id="current-climate-display" class="current-climate">
+                        <div class="climate-icon-large">🌸</div>
+                        <div class="climate-info">
+                            <div class="climate-name">春季</div>
+                            <div class="climate-desc">万物复苏的季节</div>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">
+                        <span class="icon">📋</span>
+                        <span>选择气候</span>
+                    </div>
+                    <div id="climate-list" class="climate-list"></div>
+                    
+                    <div class="section-title">
+                        <span class="icon">⚙️</span>
+                        <span>气候参数</span>
+                    </div>
+                    <div id="climate-params" class="climate-params">
+                        <div class="param-item">
+                            <span class="param-label">生长速率</span>
+                            <div class="param-bar"><div class="param-fill" style="width: 50%"></div></div>
+                            <span class="param-value">1.0x</span>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">
+                        <span class="icon">⏰</span>
+                        <span>自动轮转</span>
+                    </div>
+                    <div class="auto-rotate-section">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-rotate-toggle">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">启用季节自动轮转</span>
+                        <div class="rotate-interval" id="rotate-interval-section" style="display: none;">
+                            <label>轮转间隔：</label>
+                            <select id="rotate-interval">
+                                <option value="60">1分钟</option>
+                                <option value="300">5分钟</option>
+                                <option value="600" selected>10分钟</option>
+                                <option value="1800">30分钟</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">
+                        <span class="icon">📜</span>
+                        <span>气候历史</span>
+                    </div>
+                    <div id="climate-history" class="climate-history"></div>
+                </div>
+            </div>
+            
+            <div id="tab-narrative" class="tab-content">
+                <div class="narrative-section">
+                    <div class="section-title">
+                        <span class="icon">📖</span>
+                        <span>故事生成</span>
+                    </div>
+                    <button id="generate-narrative" class="btn-primary">
+                        🎬 生成叙事并回放
+                    </button>
+                    
+                    <div id="narrative-story" class="narrative-story" style="display: none;">
+                        <div class="story-title" id="story-title"></div>
+                        <div class="story-content" id="story-content"></div>
+                    </div>
+                    
+                    <div class="section-title">
+                        <span class="icon">🎮</span>
+                        <span>回放控制</span>
+                    </div>
+                    <div class="playback-controls">
+                        <button id="playback-prev" class="tool-btn" disabled>⏮️</button>
+                        <button id="playback-play" class="tool-btn active">▶️</button>
+                        <button id="playback-pause" class="tool-btn" style="display: none;">⏸️</button>
+                        <button id="playback-next" class="tool-btn" disabled>⏭️</button>
+                        <div class="playback-progress">
+                            <span id="playback-step">0 / 0</span>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">
+                        <span class="icon">📤</span>
+                        <span>导出</span>
+                    </div>
+                    <div class="export-buttons">
+                        <button id="export-markdown" class="btn-small">📝 导出 Markdown</button>
+                        <button id="export-frames" class="btn-small">🖼️ 导出序列帧</button>
+                    </div>
+                    
+                    <div id="export-result" class="export-result" style="display: none;">
+                        <textarea id="export-text" readonly rows="10"></textarea>
+                        <button id="copy-export" class="btn-small">复制内容</button>
+                        <a id="download-export" class="btn-small" style="display: none;">下载文件</a>
+                    </div>
+                </div>
             </div>
         </div>
         
         <div id="canvas-container">
             <div id="viewport-info" class="viewport-info">
                 <div id="mode-indicator" class="mode-indicator">选择模式</div>
+                <div id="climate-indicator" class="climate-indicator">
+                    <span id="climate-icon">🌸</span>
+                    <span id="climate-text">春季</span>
+                </div>
             </div>
             <div id="loading" class="loading" style="display: none;">
                 <div class="spinner"></div>

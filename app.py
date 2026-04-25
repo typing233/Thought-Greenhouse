@@ -1,5 +1,6 @@
 import os
 import random
+import math
 from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_cors import CORS
 from config import Config
@@ -430,6 +431,440 @@ def get_suggestions(node_id):
         return jsonify({
             'status': 'ok',
             'suggestions': suggestions
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/climates', methods=['GET'])
+def get_climates():
+    climates = kg.get_all_climates()
+    current = kg.get_current_climate()
+    return jsonify({
+        'status': 'ok',
+        'climates': climates,
+        'current_climate': current
+    })
+
+
+@app.route('/api/climate/current', methods=['GET'])
+def get_current_climate():
+    climate = kg.get_current_climate()
+    history = kg.get_climate_history(10)
+    return jsonify({
+        'status': 'ok',
+        'climate': climate,
+        'recent_history': history
+    })
+
+
+@app.route('/api/climate/switch', methods=['POST'])
+def switch_climate():
+    data = request.json
+    climate_id = data.get('climate_id')
+    
+    if not climate_id:
+        return jsonify({'status': 'error', 'message': 'Climate ID is required'}), 400
+    
+    climate = kg.get_climate(climate_id)
+    if not climate:
+        return jsonify({'status': 'error', 'message': 'Climate not found'}), 404
+    
+    success = kg.switch_climate(climate_id)
+    if success:
+        return jsonify({
+            'status': 'ok',
+            'message': f'Climate switched to {climate["name"]}',
+            'climate': climate
+        })
+    
+    return jsonify({'status': 'error', 'message': 'Failed to switch climate'}), 500
+
+
+@app.route('/api/climate/history', methods=['GET'])
+def get_climate_history():
+    limit = request.args.get('limit', 50, type=int)
+    history = kg.get_climate_history(limit)
+    return jsonify({
+        'status': 'ok',
+        'history': history
+    })
+
+
+@app.route('/api/chat/parse', methods=['POST'])
+def chat_parse():
+    data = request.json
+    user_input = data.get('message', '')
+    api_key = data.get('api_key')
+    
+    if not user_input.strip():
+        return jsonify({'status': 'error', 'message': 'Message is required'}), 400
+    
+    ai = get_ai_service(api_key)
+    
+    all_nodes = kg.get_all_nodes()
+    
+    if ai:
+        try:
+            intent = ai.parse_intent(user_input, all_nodes)
+            return jsonify({
+                'status': 'ok',
+                'intent': intent,
+                'available_nodes': all_nodes[:10]
+            })
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+    
+    return jsonify({
+        'status': 'error',
+        'message': 'Deepseek API key not configured. Please set it first.'
+    }), 400
+
+
+@app.route('/api/chat/execute', methods=['POST'])
+def chat_execute():
+    data = request.json
+    intent = data.get('intent', {})
+    node_ids = data.get('node_ids', [])
+    api_key = data.get('api_key')
+    
+    intent_type = intent.get('intent', 'query')
+    params = intent.get('parameters', {})
+    
+    ai = get_ai_service(api_key)
+    
+    try:
+        if intent_type == 'create_node':
+            content = params.get('content') or data.get('content')
+            if not content:
+                return jsonify({'status': 'error', 'message': 'Content is required for creating node'}), 400
+            
+            existing_nodes = kg.get_all_nodes()
+            existing_positions = [{'x': n.get('x', 0), 'y': n.get('y', 0), 'z': n.get('z', 0)} for n in existing_nodes]
+            position = generate_position(existing_positions)
+            
+            analysis = None
+            if ai:
+                try:
+                    analysis = ai.analyze_idea(content)
+                except:
+                    pass
+            
+            node_data = {
+                'content': content,
+                'title': analysis.get('title', content[:50] + '...' if len(content) > 50 else content) if analysis else content[:50] + '...' if len(content) > 50 else content,
+                'tags': analysis.get('tags', ['idea']) if analysis else ['idea'],
+                'node_type': 'seed',
+                'status': 'growing',
+                'growth_stage': analysis.get('growth_potential', 0.3) if analysis else 0.3,
+                'x': position['x'],
+                'y': position['y'],
+                'z': position['z'],
+                'color': '#4CAF50',
+                'size': 1.0
+            }
+            
+            node_id = kg.add_node(node_data)
+            kg.record_event('node_created', node_id, None, {'content': content, 'title': node_data['title']})
+            node = kg.get_node(node_id)
+            
+            return jsonify({
+                'status': 'ok',
+                'action': 'create_node',
+                'node': node,
+                'message': f'成功创建节点: {node_data["title"]}'
+            })
+        
+        elif intent_type == 'cross_pollinate':
+            target_nodes = node_ids if node_ids else []
+            
+            if not target_nodes:
+                tags = params.get('tags', [])
+                if tags:
+                    all_nodes = kg.get_all_nodes()
+                    for tag in tags:
+                        for node in all_nodes:
+                            node_tags = node.get('tags', [])
+                            if tag in node_tags and node['id'] not in target_nodes:
+                                target_nodes.append(node['id'])
+                                if len(target_nodes) >= 2:
+                                    break
+                        if len(target_nodes) >= 2:
+                            break
+            
+            if len(target_nodes) < 2:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Need at least 2 nodes for cross-pollination'
+                }), 400
+            
+            parent_a = target_nodes[0]
+            parent_b = target_nodes[1]
+            
+            node_a = kg.get_node(parent_a)
+            node_b = kg.get_node(parent_b)
+            
+            if not node_a or not node_b:
+                return jsonify({'status': 'error', 'message': 'One or both nodes not found'}), 404
+            
+            if not ai:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Deepseek API key not configured'
+                }), 400
+            
+            hybrid = ai.cross_pollinate(
+                node_a.get('content', ''),
+                node_b.get('content', '')
+            )
+            
+            mid_x = (node_a.get('x', 0) + node_b.get('x', 0)) / 2
+            mid_y = (node_a.get('y', 0) + node_b.get('y', 0)) / 2
+            mid_z = (node_a.get('z', 0) + node_b.get('z', 0)) / 2
+            
+            child_node_data = {
+                'content': hybrid.get('hybrid_description', ''),
+                'title': hybrid.get('hybrid_title', 'Hybrid Idea'),
+                'tags': ['hybrid'] + (node_a.get('tags', [])[:2] if node_a else []) + (node_b.get('tags', [])[:2] if node_b else []),
+                'node_type': 'hybrid',
+                'status': 'growing',
+                'growth_stage': hybrid.get('novelty_score', 0.7),
+                'x': mid_x + 2,
+                'y': mid_y + 2,
+                'z': mid_z,
+                'color': '#9C27B0',
+                'size': 1.5,
+                'metadata': {
+                    'hybrid_data': hybrid,
+                    'parent_a': parent_a,
+                    'parent_b': parent_b
+                }
+            }
+            
+            child_id = kg.add_node(child_node_data)
+            kg.record_hybrid(parent_a, parent_b, child_id)
+            kg.record_event('hybrid_created', parent_a, parent_b, {
+                'child_id': child_id,
+                'child_title': child_node_data['title']
+            })
+            
+            try:
+                kg.add_edge(parent_a, child_id, 'parent', 1.0)
+                kg.add_edge(parent_b, child_id, 'parent', 1.0)
+            except:
+                pass
+            
+            child_node = kg.get_node(child_id)
+            
+            return jsonify({
+                'status': 'ok',
+                'action': 'cross_pollinate',
+                'hybrid': hybrid,
+                'child_node': child_node,
+                'parent_a': node_a,
+                'parent_b': node_b,
+                'message': f'杂交成功！新节点: {child_node_data["title"]}'
+            })
+        
+        elif intent_type == 'move_nodes':
+            if len(node_ids) < 2:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Need at least 2 nodes to move together'
+                }), 400
+            
+            first_node = kg.get_node(node_ids[0])
+            if not first_node:
+                return jsonify({'status': 'error', 'message': 'First node not found'}), 404
+            
+            target_x = first_node.get('x', 0)
+            target_y = first_node.get('y', 0)
+            target_z = first_node.get('z', 0)
+            
+            moved_nodes = []
+            for i, node_id in enumerate(node_ids[1:], 1):
+                angle = (i - 1) * (2 * 3.14159 / (len(node_ids) - 1))
+                radius = 2.5
+                new_x = target_x + radius * math.cos(angle)
+                new_z = target_z + radius * math.sin(angle)
+                
+                kg.update_node(node_id, {'x': new_x, 'y': target_y, 'z': new_z})
+                moved_nodes.append({
+                    'id': node_id,
+                    'new_position': {'x': new_x, 'y': target_y, 'z': new_z}
+                })
+            
+            kg.record_event('nodes_moved', None, None, {
+                'node_ids': node_ids,
+                'target_center': {'x': target_x, 'y': target_y, 'z': target_z}
+            })
+            
+            return jsonify({
+                'status': 'ok',
+                'action': 'move_nodes',
+                'node_ids': node_ids,
+                'moved_nodes': moved_nodes,
+                'target_center': {'x': target_x, 'y': target_y, 'z': target_z},
+                'message': f'已将 {len(node_ids)} 个节点移动到一起'
+            })
+        
+        elif intent_type == 'switch_climate':
+            climate_type = params.get('climate_type')
+            climate_map = {
+                'spring': 'spring', '春季': 'spring',
+                'summer': 'summer', '夏季': 'summer',
+                'autumn': 'autumn', 'fall': 'autumn', '秋季': 'autumn',
+                'winter': 'winter', '冬季': 'winter',
+                'storm': 'storm', '风暴': 'storm',
+                'drought': 'drought', '干旱': 'drought'
+            }
+            
+            climate_id = climate_map.get(climate_type, climate_type)
+            climate = kg.get_climate(climate_id)
+            
+            if not climate:
+                return jsonify({'status': 'error', 'message': f'Climate {climate_type} not found'}), 404
+            
+            success = kg.switch_climate(climate_id)
+            if success:
+                return jsonify({
+                    'status': 'ok',
+                    'action': 'switch_climate',
+                    'climate': climate,
+                    'message': f'气候已切换到: {climate["name"]}'
+                })
+            
+            return jsonify({'status': 'error', 'message': 'Failed to switch climate'}), 500
+        
+        elif intent_type == 'focus_node':
+            node_id = params.get('node_id') or (node_ids[0] if node_ids else None)
+            if not node_id:
+                return jsonify({'status': 'error', 'message': 'Node ID required'}), 400
+            
+            node = kg.get_node(node_id)
+            if not node:
+                return jsonify({'status': 'error', 'message': 'Node not found'}), 404
+            
+            return jsonify({
+                'status': 'ok',
+                'action': 'focus_node',
+                'node': node,
+                'message': f'聚焦到节点: {node.get("title", "节点")}'
+            })
+        
+        elif intent_type == 'delete_node':
+            node_id = params.get('node_id') or (node_ids[0] if node_ids else None)
+            if not node_id:
+                return jsonify({'status': 'error', 'message': 'Node ID required'}), 400
+            
+            node = kg.get_node(node_id)
+            if not node:
+                return jsonify({'status': 'error', 'message': 'Node not found'}), 404
+            
+            node_title = node.get('title', '节点')
+            kg.delete_node(node_id)
+            kg.record_event('node_deleted', node_id, None, {'title': node_title})
+            
+            return jsonify({
+                'status': 'ok',
+                'action': 'delete_node',
+                'node_id': node_id,
+                'node_title': node_title,
+                'message': f'已删除节点: {node_title}'
+            })
+        
+        else:
+            return jsonify({
+                'status': 'ok',
+                'action': 'query',
+                'message': 'I understood your query. No action needed.'
+            })
+    
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/events', methods=['GET'])
+def get_events():
+    limit = request.args.get('limit', 100, type=int)
+    events = kg.get_all_events(limit)
+    return jsonify({
+        'status': 'ok',
+        'events': events
+    })
+
+
+@app.route('/api/narrative/generate', methods=['POST'])
+def generate_narrative():
+    data = request.json
+    api_key = data.get('api_key')
+    
+    ai = get_ai_service(api_key)
+    if not ai:
+        return jsonify({
+            'status': 'error',
+            'message': 'Deepseek API key not configured'
+        }), 400
+    
+    try:
+        events = kg.get_all_events(200)
+        nodes = kg.get_all_nodes()
+        
+        narrative = ai.generate_narrative(events, nodes)
+        playback_commands = ai.generate_playback_commands(narrative, events)
+        
+        return jsonify({
+            'status': 'ok',
+            'narrative': narrative,
+            'playback_commands': playback_commands,
+            'events_count': len(events)
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/export/markdown', methods=['GET'])
+def export_markdown():
+    import tempfile
+    
+    data = request.args or {}
+    api_key = data.get('api_key')
+    
+    ai = get_ai_service(api_key)
+    if not ai:
+        events = kg.get_all_events(100)
+        nodes = kg.get_all_nodes()
+        
+        markdown = "# 知识花园演变记录\n\n"
+        markdown += "## 花园统计\n"
+        markdown += f"- 总节点数: {len(nodes)}\n"
+        markdown += f"- 总事件数: {len(events)}\n\n"
+        
+        markdown += "## 事件时间线\n"
+        for event in events:
+            markdown += f"\n### {event.get('timestamp', 'Unknown time')}\n"
+            markdown += f"- **类型**: {event.get('event_type')}\n"
+            if event.get('node_title'):
+                markdown += f"- **节点**: {event.get('node_title')}\n"
+            if event.get('details'):
+                markdown += f"- **详情**: {event.get('details')}\n"
+        
+        return jsonify({
+            'status': 'ok',
+            'markdown': markdown,
+            'warning': 'AI service not configured, using basic export'
+        })
+    
+    try:
+        events = kg.get_all_events(200)
+        nodes = kg.get_all_nodes()
+        
+        narrative = ai.generate_narrative(events, nodes)
+        
+        return jsonify({
+            'status': 'ok',
+            'markdown': narrative.get('markdown_export', ''),
+            'narrative': narrative
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500

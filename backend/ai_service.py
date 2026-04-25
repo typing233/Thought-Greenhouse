@@ -237,3 +237,254 @@ class AIService:
                 "revival_suggestions": [],
                 "future_potential": "需要更多互动来评估"
             }
+    
+    def parse_intent(self, user_input: str, current_nodes: List[Dict] = None) -> Dict[str, Any]:
+        nodes_summary = ""
+        if current_nodes and len(current_nodes) > 0:
+            nodes_summary = "当前花园中的节点：\n"
+            for i, node in enumerate(current_nodes[:20]):
+                nodes_summary += f"- 节点{i+1}: id={node.get('id', '')}, 标题={node.get('title', '')}, 标签={node.get('tags', [])}, 内容={node.get('content', '')[:100]}\n"
+        
+        system_prompt = """
+你是一个3D知识花园的智能助手。解析用户的自然语言指令，识别用户想要执行的操作。
+
+可用的操作类型：
+- create_node: 创建新节点/种植种子。需要参数: content (想法内容)
+- cross_pollinate: 杂交两个节点。需要参数: node_ids (两个节点的ID数组) 或 tags (标签名，用于筛选节点)
+- connect_nodes: 连接两个节点建立关联。需要参数: node_ids (两个节点的ID数组)
+- move_nodes: 移动节点到一起。需要参数: node_ids (要移动的节点ID数组)
+- delete_node: 删除节点。需要参数: node_id (要删除的节点ID)
+- focus_node: 聚焦查看某个节点。需要参数: node_id (节点ID)
+- evolve_node: 分析节点演化。需要参数: node_id (节点ID)
+- switch_climate: 切换气候。需要参数: climate_type (spring/summer/autumn/winter/storm/drought)
+- get_suggestions: 获取扩展建议。需要参数: node_id (节点ID)
+- query: 一般性查询，不需要执行操作。
+
+请以JSON格式返回：
+{
+    "intent": "操作类型",
+    "confidence": 0.0到1.0的置信度,
+    "parameters": {
+        根据操作类型提供相应参数
+    },
+    "extracted_entities": {
+        "node_titles": ["提取到的节点标题"],
+        "tags": ["提取到的标签"],
+        "keywords": ["关键词"]
+    },
+    "response": "给用户的自然语言回复，说明理解的意图",
+    "needs_confirmation": true/false, 操作是否需要用户确认
+    "preview_description": "预览操作的描述"
+}
+
+示例：
+用户输入: "把关于设计的种子杂交一下"
+返回: {
+    "intent": "cross_pollinate",
+    "confidence": 0.9,
+    "parameters": {"tags": ["设计"]},
+    "extracted_entities": {"tags": ["设计"], "keywords": ["杂交"]},
+    "response": "我理解你想要杂交关于设计的种子。让我找到相关节点...",
+    "needs_confirmation": true,
+    "preview_description": "将杂交所有带有'设计'标签的节点"
+}
+
+用户输入: "把这三个节点移到一起"
+返回: {
+    "intent": "move_nodes",
+    "confidence": 0.85,
+    "parameters": {},
+    "extracted_entities": {"keywords": ["移动", "三个节点"]},
+    "response": "你想将三个节点移动到一起。请选择要移动的节点，或者告诉我具体是哪些节点。",
+    "needs_confirmation": true,
+    "preview_description": "将选中的三个节点聚集到一起"
+}
+
+只返回JSON，不要其他内容。
+"""
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"{nodes_summary}\n\n用户输入：{user_input}\n\n请解析用户意图。"}
+        ]
+        
+        try:
+            result = self._call_api(messages, temperature=0.7)
+            return json.loads(result)
+        except Exception as e:
+            return {
+                "intent": "query",
+                "confidence": 0.0,
+                "parameters": {},
+                "extracted_entities": {},
+                "response": "抱歉，我不太理解你的指令。请尝试用更清晰的方式描述。",
+                "needs_confirmation": False,
+                "preview_description": ""
+            }
+    
+    def generate_narrative(self, events: List[Dict], nodes: List[Dict] = None) -> Dict[str, Any]:
+        events_summary = ""
+        for i, event in enumerate(events):
+            event_type = event.get('event_type', '')
+            timestamp = event.get('timestamp', '')
+            details = event.get('details', {})
+            node_title = event.get('node_title', '未知节点')
+            related_title = event.get('related_node_title', '')
+            
+            desc = f"事件{i+1} [{timestamp}]: {event_type}"
+            if node_title:
+                desc += f" - 节点: {node_title}"
+            if related_title:
+                desc += f" -> 相关节点: {related_title}"
+            if details:
+                desc += f" | 详情: {details}"
+            events_summary += desc + "\n"
+        
+        system_prompt = """
+你是一个故事讲述者。基于知识花园中发生的事件序列，生成一段引人入胜的叙事文本或故事脚本。
+
+事件类型说明：
+- node_created: 新节点被创建/种子被种下
+- node_updated: 节点被更新
+- node_deleted: 节点被删除
+- hybrid_created: 杂交产生新节点
+- connection_created: 两个节点建立连接
+- climate_changed: 气候发生变化
+- node_wilted: 节点枯萎
+- node_evolved: 节点演化
+
+请以JSON格式返回：
+{
+    "story_title": "故事标题",
+    "narrative_text": "连贯的叙事文本，用生动的语言描述花园的演变历程",
+    "story_segments": [
+        {
+            "segment_index": 1,
+            "timestamp": "事件时间戳",
+            "event_type": "事件类型",
+            "title": "分段标题",
+            "content": "分段内容",
+            "visual_cues": {
+                "highlight_nodes": ["要高亮的节点ID列表"],
+                "camera_focus": {"x": 0, "y": 0, "z": 0},
+                "animation": "动画类型: create/hybridize/wilt/climate_shift"
+            },
+            "image_description": "用于生成配图的描述"
+        },
+        ...
+    ],
+    "key_characters": [
+        {"node_id": "节点ID", "role": "在故事中的角色", "description": "描述"}
+    ],
+    "plot_arc": {
+        "exposition": "故事开端",
+        "rising_action": "情节发展",
+        "climax": "高潮",
+        "falling_action": "回落",
+        "resolution": "结局"
+    },
+    "themes": ["主题1", "主题2"],
+    "markdown_export": "完整的Markdown格式故事，包含标题、分段、时间线"
+}
+
+叙事要求：
+1. 将技术事件转化为生动的故事
+2. 使用园艺/花园隐喻：种子、生长、杂交、季节变化等
+3. 标注关键节点在故事中的角色
+4. 提供可视化线索用于3D场景回放
+5. Markdown格式应适合导出分享
+
+只返回JSON，不要其他内容。
+"""
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"事件序列：\n{events_summary}\n\n请基于这些事件生成一个故事叙事。"}
+        ]
+        
+        try:
+            result = self._call_api(messages, temperature=0.8)
+            return json.loads(result)
+        except Exception as e:
+            return {
+                "story_title": "知识花园的演变",
+                "narrative_text": "这是一个关于想法如何生长和演变的故事...",
+                "story_segments": [],
+                "key_characters": [],
+                "plot_arc": {
+                    "exposition": "花园初始状态",
+                    "rising_action": "想法开始生长",
+                    "climax": "关键杂交事件",
+                    "falling_action": "花园持续演变",
+                    "resolution": "当前状态"
+                },
+                "themes": ["知识生长", "创意杂交"],
+                "markdown_export": "# 知识花园的演变\n\n这是一个关于想法如何生长和演变的故事。"
+            }
+    
+    def generate_playback_commands(self, narrative: Dict, events: List[Dict]) -> List[Dict]:
+        commands = []
+        
+        for i, event in enumerate(events):
+            event_type = event.get('event_type', '')
+            node_id = event.get('node_id')
+            related_node_id = event.get('related_node_id')
+            details = event.get('details', {})
+            
+            command = {
+                "step_index": i,
+                "event_type": event_type,
+                "timestamp": event.get('timestamp'),
+                "commands": [],
+                "duration": 2.0,
+                "description": ""
+            }
+            
+            if event_type == 'node_created':
+                command["commands"] = [
+                    {"type": "create_node", "node_id": node_id, "animate": True},
+                    {"type": "highlight", "node_ids": [node_id], "color": "#4CAF50"}
+                ]
+                command["description"] = f"新种子种下: {event.get('node_title', '新节点')}"
+            
+            elif event_type == 'hybrid_created':
+                command["commands"] = [
+                    {"type": "highlight", "node_ids": [node_id, related_node_id], "color": "#9C27B0"},
+                    {"type": "animate_hybrid", "parent_a": node_id, "parent_b": related_node_id},
+                    {"type": "create_node", "node_id": details.get('child_id'), "animate": True}
+                ]
+                command["description"] = f"杂交成功: 产生新节点"
+                command["duration"] = 3.0
+            
+            elif event_type == 'connection_created':
+                command["commands"] = [
+                    {"type": "highlight", "node_ids": [node_id, related_node_id], "color": "#2196F3"},
+                    {"type": "create_edge", "source": node_id, "target": related_node_id}
+                ]
+                command["description"] = f"建立连接: {event.get('node_title')} <-> {event.get('related_node_title')}"
+            
+            elif event_type == 'climate_changed':
+                climate_type = details.get('climate_type', 'spring')
+                command["commands"] = [
+                    {"type": "climate_effect", "climate_type": climate_type}
+                ]
+                command["description"] = f"气候变化: {details.get('climate_name', climate_type)}"
+                command["duration"] = 2.5
+            
+            elif event_type == 'node_wilted':
+                command["commands"] = [
+                    {"type": "highlight", "node_ids": [node_id], "color": "#795548"},
+                    {"type": "animate_wilt", "node_id": node_id}
+                ]
+                command["description"] = f"节点枯萎: {event.get('node_title')}"
+            
+            elif event_type == 'node_deleted':
+                command["commands"] = [
+                    {"type": "highlight", "node_ids": [node_id], "color": "#F44336"},
+                    {"type": "remove_node", "node_id": node_id}
+                ]
+                command["description"] = f"节点移除: {event.get('node_title', '节点')}"
+            
+            commands.append(command)
+        
+        return commands

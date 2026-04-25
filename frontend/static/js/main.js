@@ -6,6 +6,18 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSelectedNodeId = null;
     const modeIndicator = document.getElementById('mode-indicator');
     
+    let currentClimate = null;
+    let climates = [];
+    let autoRotateEnabled = false;
+    let autoRotateInterval = null;
+    let autoRotateIndex = 0;
+    
+    let pendingIntent = null;
+    let selectedChatNodes = [];
+    
+    let currentNarrative = null;
+    let isPlaybackActive = false;
+    
     const loading = document.getElementById('loading');
     const loadingText = document.getElementById('loading-text');
     const message = document.getElementById('message');
@@ -70,7 +82,8 @@ document.addEventListener('DOMContentLoaded', () => {
             select: '选择模式 - 点击查看详情',
             pollinate: '授粉模式 - 点击两个节点杂交',
             connect: '连接模式 - 点击两个节点建立关联',
-            evolve: '演化模式 - 点击节点分析演变'
+            evolve: '演化模式 - 点击节点分析演变',
+            chat_select: '选择模式 - 点击选择节点'
         };
         modeIndicator.textContent = modeLabels[mode] || mode;
     }
@@ -285,6 +298,548 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    function setupTabNavigation() {
+        const tabButtons = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+        
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetTab = btn.dataset.tab;
+                
+                tabButtons.forEach(b => b.classList.remove('active'));
+                tabContents.forEach(c => c.classList.remove('active'));
+                
+                btn.classList.add('active');
+                document.getElementById(`tab-${targetTab}`).classList.add('active');
+                
+                if (targetTab === 'climate') {
+                    loadClimates();
+                }
+            });
+        });
+    }
+    
+    async function loadClimates() {
+        try {
+            const [climatesResult, currentResult, historyResult] = await Promise.all([
+                getClimates(),
+                getCurrentClimate(),
+                getClimateHistory(20)
+            ]);
+            
+            if (climatesResult.status === 'ok') {
+                climates = climatesResult.climates;
+                renderClimateList(climates);
+            }
+            
+            if (currentResult.status === 'ok') {
+                currentClimate = currentResult.climate;
+                renderCurrentClimate(currentClimate);
+                visualizer.setClimate(currentClimate.type);
+                updateClimateIndicator(currentClimate);
+            }
+            
+            if (historyResult.status === 'ok') {
+                renderClimateHistory(historyResult.history);
+            }
+        } catch (error) {
+            console.error('Failed to load climates:', error);
+        }
+    }
+    
+    function renderCurrentClimate(climate) {
+        const display = document.getElementById('current-climate-display');
+        const params = climate.parameters || {};
+        
+        display.innerHTML = `
+            <div class="climate-icon-large">${climate.icon}</div>
+            <div class="climate-info">
+                <div class="climate-name">${climate.name}</div>
+                <div class="climate-desc">${climate.description || ''}</div>
+            </div>
+        `;
+        
+        const paramsContainer = document.getElementById('climate-params');
+        paramsContainer.innerHTML = `
+            <div class="param-item">
+                <span class="param-label">生长速率</span>
+                <div class="param-bar"><div class="param-fill" style="width: ${(params.growth_rate_multiplier || 1) * 50}%"></div></div>
+                <span class="param-value">${(params.growth_rate_multiplier || 1).toFixed(1)}x</span>
+            </div>
+            <div class="param-item">
+                <span class="param-label">杂交成功率</span>
+                <div class="param-bar"><div class="param-fill" style="width: ${(params.hybrid_success_rate || 0.5) * 100}%"></div></div>
+                <span class="param-value">${((params.hybrid_success_rate || 0.5) * 100).toFixed(0)}%</span>
+            </div>
+            <div class="param-item">
+                <span class="param-label">枯萎速率</span>
+                <div class="param-bar"><div class="param-fill" style="width: ${(params.wilting_rate_multiplier || 1) * 50}%"></div></div>
+                <span class="param-value">${(params.wilting_rate_multiplier || 1).toFixed(1)}x</span>
+            </div>
+            <div class="param-item">
+                <span class="param-label">关联发现概率</span>
+                <div class="param-bar"><div class="param-fill" style="width: ${(params.association_discovery_rate || 0.5) * 100}%"></div></div>
+                <span class="param-value">${((params.association_discovery_rate || 0.5) * 100).toFixed(0)}%</span>
+            </div>
+        `;
+    }
+    
+    function renderClimateList(climateList) {
+        const listContainer = document.getElementById('climate-list');
+        
+        listContainer.innerHTML = climateList.map(climate => `
+            <div class="climate-item ${currentClimate && currentClimate.id === climate.id ? 'active' : ''}" data-id="${climate.id}">
+                <span class="climate-icon">${climate.icon}</span>
+                <span class="climate-name">${climate.name}</span>
+            </div>
+        `).join('');
+        
+        listContainer.querySelectorAll('.climate-item').forEach(item => {
+            item.addEventListener('click', () => {
+                switchToClimate(item.dataset.id);
+            });
+        });
+    }
+    
+    function renderClimateHistory(history) {
+        const historyContainer = document.getElementById('climate-history');
+        
+        if (!history || history.length === 0) {
+            historyContainer.innerHTML = '<p style="color: #78909c; text-align: center;">暂无历史记录</p>';
+            return;
+        }
+        
+        historyContainer.innerHTML = history.map(h => `
+            <div class="history-item">
+                <div class="history-action">${h.climate_icon || ''} ${h.climate_name || h.climate_type}</div>
+                <div class="history-time">${new Date(h.timestamp).toLocaleString()}</div>
+            </div>
+        `).join('');
+    }
+    
+    async function switchToClimate(climateId) {
+        if (currentClimate && currentClimate.id === climateId) return;
+        
+        showLoading('切换气候中...');
+        try {
+            const result = await switchClimate(climateId);
+            if (result.status === 'ok') {
+                currentClimate = result.climate;
+                renderCurrentClimate(currentClimate);
+                renderClimateList(climates);
+                visualizer.setClimate(currentClimate.type);
+                updateClimateIndicator(currentClimate);
+                showMessage(`已切换到 ${currentClimate.name}`, 'success');
+                
+                const historyResult = await getClimateHistory(20);
+                if (historyResult.status === 'ok') {
+                    renderClimateHistory(historyResult.history);
+                }
+            }
+        } catch (error) {
+            showMessage('气候切换失败: ' + error.message, 'error');
+        } finally {
+            hideLoading();
+        }
+    }
+    
+    function updateClimateIndicator(climate) {
+        const icon = document.getElementById('climate-icon');
+        const text = document.getElementById('climate-text');
+        if (icon) icon.textContent = climate.icon;
+        if (text) text.textContent = climate.name;
+    }
+    
+    function setupAutoRotate() {
+        const toggle = document.getElementById('auto-rotate-toggle');
+        const intervalSection = document.getElementById('rotate-interval-section');
+        const intervalSelect = document.getElementById('rotate-interval');
+        
+        toggle.addEventListener('change', () => {
+            autoRotateEnabled = toggle.checked;
+            intervalSection.style.display = autoRotateEnabled ? 'block' : 'none';
+            
+            if (autoRotateEnabled) {
+                startAutoRotate();
+            } else {
+                stopAutoRotate();
+            }
+        });
+        
+        intervalSelect.addEventListener('change', () => {
+            if (autoRotateEnabled) {
+                stopAutoRotate();
+                startAutoRotate();
+            }
+        });
+    }
+    
+    function startAutoRotate() {
+        const intervalSelect = document.getElementById('rotate-interval');
+        const intervalMs = parseInt(intervalSelect.value) * 1000;
+        
+        const seasonalClimates = climates.filter(c => 
+            ['spring', 'summer', 'autumn', 'winter'].includes(c.type)
+        );
+        
+        if (seasonalClimates.length === 0) return;
+        
+        autoRotateInterval = setInterval(() => {
+            autoRotateIndex = (autoRotateIndex + 1) % seasonalClimates.length;
+            switchToClimate(seasonalClimates[autoRotateIndex].id);
+        }, intervalMs);
+    }
+    
+    function stopAutoRotate() {
+        if (autoRotateInterval) {
+            clearInterval(autoRotateInterval);
+            autoRotateInterval = null;
+        }
+    }
+    
+    function setupChatPanel() {
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('chat-send');
+        const previewConfirm = document.getElementById('preview-confirm');
+        const previewCancel = document.getElementById('preview-cancel');
+        
+        sendBtn.addEventListener('click', sendChatMessage);
+        
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+        
+        previewConfirm.addEventListener('click', confirmPreview);
+        previewCancel.addEventListener('click', cancelPreview);
+        
+        visualizer.onChatSelectionUpdate = (nodeIds) => {
+            selectedChatNodes = nodeIds;
+            updateChatSelectionDisplay();
+        };
+        
+        const hintChips = document.querySelectorAll('.hint-chip');
+        hintChips.forEach(chip => {
+            chip.addEventListener('click', () => {
+                chatInput.value = chip.textContent;
+                chatInput.focus();
+            });
+        });
+    }
+    
+    async function sendChatMessage() {
+        const chatInput = document.getElementById('chat-input');
+        const message = chatInput.value.trim();
+        
+        if (!message) return;
+        
+        addChatMessage(message, 'user');
+        chatInput.value = '';
+        
+        showLoading('AI 正在解析意图...');
+        try {
+            const result = await parseChatIntent(message);
+            
+            if (result.status === 'ok') {
+                addChatMessage(result.intent.response, 'ai');
+                pendingIntent = result.intent;
+                
+                if (result.intent.needs_confirmation) {
+                    showPreview(result.intent);
+                } else {
+                    executeIntent(result.intent);
+                }
+            } else {
+                addChatMessage('抱歉，我无法理解您的指令。请尝试用其他方式表达。', 'ai');
+            }
+        } catch (error) {
+            addChatMessage('处理您的请求时出错: ' + error.message, 'ai');
+        } finally {
+            hideLoading();
+        }
+    }
+    
+    function addChatMessage(text, type) {
+        const messagesContainer = document.getElementById('chat-messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `chat-message ${type}`;
+        
+        const label = type === 'user' ? '👤 用户' : '🤖 AI';
+        messageDiv.innerHTML = `<div class="message-label">${label}</div><div class="message-content">${text}</div>`;
+        
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+    
+    function showPreview(intent) {
+        const previewArea = document.getElementById('chat-preview');
+        const previewContent = document.getElementById('preview-content');
+        
+        let nodeIds = [];
+        if (intent.extracted_entities && intent.extracted_entities.node_ids) {
+            nodeIds = intent.extracted_entities.node_ids;
+        }
+        
+        if (intent.parameters && intent.parameters.node_ids) {
+            nodeIds = intent.parameters.node_ids;
+        }
+        
+        if (nodeIds.length > 0) {
+            visualizer.setPreviewNodes(nodeIds, true);
+            selectedChatNodes = nodeIds;
+        }
+        
+        previewContent.innerHTML = `
+            <p class="preview-desc">${intent.preview_description || '即将执行以下操作'}</p>
+            <p style="color: #78909c; font-size: 0.85rem;">操作类型: ${intent.intent}</p>
+            ${nodeIds.length > 0 ? `<p style="color: #4caf50; font-size: 0.85rem;">涉及节点数: ${nodeIds.length} 个</p>` : ''}
+            <p style="color: #ffc107; font-size: 0.85rem; margin-top: 10px;">请确认是否执行此操作。您也可以在场景中点击选择/取消选择节点。</p>
+        `;
+        
+        previewArea.style.display = 'block';
+    }
+    
+    function updateChatSelectionDisplay() {
+        const previewContent = document.getElementById('preview-content');
+        const currentCount = previewContent.querySelector('.preview-desc');
+        
+        if (currentCount && selectedChatNodes.length > 0) {
+            const countSpan = previewContent.querySelector('[style*="color: #4caf50"]');
+            if (countSpan) {
+                countSpan.textContent = `涉及节点数: ${selectedChatNodes.length} 个`;
+            }
+        }
+        
+        if (selectedChatNodes.length > 0) {
+            visualizer.setPreviewNodes(selectedChatNodes, true);
+        }
+    }
+    
+    async function confirmPreview() {
+        if (!pendingIntent) return;
+        
+        const previewArea = document.getElementById('chat-preview');
+        previewArea.style.display = 'none';
+        
+        visualizer.setPreviewNodes([], false);
+        
+        await executeIntent(pendingIntent, selectedChatNodes);
+        pendingIntent = null;
+        selectedChatNodes = [];
+    }
+    
+    function cancelPreview() {
+        const previewArea = document.getElementById('chat-preview');
+        previewArea.style.display = 'none';
+        
+        visualizer.setPreviewNodes([], false);
+        pendingIntent = null;
+        selectedChatNodes = [];
+        
+        addChatMessage('操作已取消。', 'ai');
+    }
+    
+    async function executeIntent(intent, nodeIds = []) {
+        showLoading('执行操作中...');
+        try {
+            const result = await executeChatIntent(intent, nodeIds);
+            
+            if (result.status === 'ok') {
+                addChatMessage(result.message || '操作已完成。', 'ai');
+                
+                if (result.executed_actions) {
+                    result.executed_actions.forEach(action => {
+                        if (action.type === 'create_node' && action.node) {
+                            visualizer.addNode(action.node);
+                        } else if (action.type === 'cross_pollinate' && action.child_node) {
+                            visualizer.animateHybridEffect(action.parent_a, action.parent_b);
+                            setTimeout(() => {
+                                visualizer.addNode(action.child_node);
+                            }, 500);
+                        } else if (action.type === 'move_nodes' && action.updated_positions) {
+                            action.updated_positions.forEach(pos => {
+                                visualizer.updateNode(pos.node_id, {
+                                    x: pos.x, y: pos.y, z: pos.z
+                                });
+                            });
+                        } else if (action.type === 'switch_climate' && action.climate) {
+                            currentClimate = action.climate;
+                            visualizer.setClimate(currentClimate.type);
+                            updateClimateIndicator(currentClimate);
+                            renderCurrentClimate(currentClimate);
+                        }
+                    });
+                }
+                
+                loadGraph();
+                showMessage('操作执行成功', 'success');
+            } else {
+                addChatMessage('执行失败: ' + (result.message || '未知错误'), 'ai');
+                showMessage('操作执行失败', 'error');
+            }
+        } catch (error) {
+            addChatMessage('执行出错: ' + error.message, 'ai');
+            showMessage('操作执行失败', 'error');
+        } finally {
+            hideLoading();
+        }
+    }
+    
+    function setupNarrativePanel() {
+        const generateBtn = document.getElementById('generate-narrative');
+        const playBtn = document.getElementById('playback-play');
+        const pauseBtn = document.getElementById('playback-pause');
+        const prevBtn = document.getElementById('playback-prev');
+        const nextBtn = document.getElementById('playback-next');
+        const exportMarkdownBtn = document.getElementById('export-markdown');
+        const exportFramesBtn = document.getElementById('export-frames');
+        const copyBtn = document.getElementById('copy-export');
+        
+        generateBtn.addEventListener('click', generateNarrative);
+        playBtn.addEventListener('click', togglePlayback);
+        pauseBtn.addEventListener('click', togglePlayback);
+        exportMarkdownBtn.addEventListener('click', exportNarrativeMarkdown);
+        copyBtn.addEventListener('click', copyExportedText);
+        
+        visualizer.onPlaybackStart = (totalSteps) => {
+            updatePlaybackControls(true, totalSteps);
+        };
+        
+        visualizer.onPlaybackStep = (current, total, step) => {
+            updatePlaybackProgress(current, total);
+        };
+        
+        visualizer.onPlaybackStop = () => {
+            updatePlaybackControls(false);
+            isPlaybackActive = false;
+        };
+        
+        visualizer.onPlaybackPause = () => {
+            isPlaybackActive = false;
+            document.getElementById('playback-play').style.display = 'block';
+            document.getElementById('playback-pause').style.display = 'none';
+        };
+        
+        visualizer.onPlaybackResume = () => {
+            isPlaybackActive = true;
+            document.getElementById('playback-play').style.display = 'none';
+            document.getElementById('playback-pause').style.display = 'block';
+        };
+    }
+    
+    async function generateNarrative() {
+        showLoading('正在生成叙事...');
+        try {
+            const result = await generateNarrative();
+            
+            if (result.status === 'ok') {
+                currentNarrative = result;
+                
+                const storyContainer = document.getElementById('narrative-story');
+                const storyTitle = document.getElementById('story-title');
+                const storyContent = document.getElementById('story-content');
+                
+                storyTitle.textContent = result.narrative.title || '知识花园的故事';
+                storyContent.innerHTML = result.narrative.story.replace(/\n/g, '<br>');
+                storyContainer.style.display = 'block';
+                
+                if (result.playback_commands && result.playback_commands.length > 0) {
+                    document.getElementById('playback-play').disabled = false;
+                    showMessage('叙事已生成，可点击播放按钮回放', 'success');
+                }
+            } else {
+                showMessage('生成叙事失败: ' + (result.message || '未知错误'), 'error');
+            }
+        } catch (error) {
+            showMessage('生成叙事失败: ' + error.message, 'error');
+        } finally {
+            hideLoading();
+        }
+    }
+    
+    function togglePlayback() {
+        if (!currentNarrative || !currentNarrative.playback_commands) {
+            showMessage('请先生成叙事', 'error');
+            return;
+        }
+        
+        if (isPlaybackActive) {
+            visualizer.pausePlayback();
+        } else {
+            if (visualizer.isPlaying) {
+                visualizer.resumePlayback();
+            } else {
+                visualizer.startPlayback(currentNarrative.playback_commands);
+            }
+            isPlaybackActive = true;
+        }
+        
+        const playBtn = document.getElementById('playback-play');
+        const pauseBtn = document.getElementById('playback-pause');
+        
+        if (isPlaybackActive) {
+            playBtn.style.display = 'none';
+            pauseBtn.style.display = 'block';
+        } else {
+            playBtn.style.display = 'block';
+            pauseBtn.style.display = 'none';
+        }
+    }
+    
+    function updatePlaybackControls(active, totalSteps = 0) {
+        const playBtn = document.getElementById('playback-play');
+        const pauseBtn = document.getElementById('playback-pause');
+        const prevBtn = document.getElementById('playback-prev');
+        const nextBtn = document.getElementById('playback-next');
+        const stepDisplay = document.getElementById('playback-step');
+        
+        if (active) {
+            prevBtn.disabled = false;
+            nextBtn.disabled = false;
+            stepDisplay.textContent = `0 / ${totalSteps}`;
+        } else {
+            playBtn.style.display = 'block';
+            pauseBtn.style.display = 'none';
+            stepDisplay.textContent = '0 / 0';
+        }
+    }
+    
+    function updatePlaybackProgress(current, total) {
+        document.getElementById('playback-step').textContent = `${current + 1} / ${total}`;
+    }
+    
+    async function exportNarrativeMarkdown() {
+        showLoading('正在导出 Markdown...');
+        try {
+            const result = await exportMarkdown();
+            
+            if (result.status === 'ok') {
+                const exportResult = document.getElementById('export-result');
+                const exportText = document.getElementById('export-text');
+                
+                exportText.value = result.markdown;
+                exportResult.style.display = 'block';
+                
+                showMessage('Markdown 导出成功', 'success');
+            } else {
+                showMessage('导出失败: ' + (result.message || '未知错误'), 'error');
+            }
+        } catch (error) {
+            showMessage('导出失败: ' + error.message, 'error');
+        } finally {
+            hideLoading();
+        }
+    }
+    
+    function copyExportedText() {
+        const exportText = document.getElementById('export-text');
+        exportText.select();
+        document.execCommand('copy');
+        showMessage('内容已复制到剪贴板', 'success');
+    }
+    
     panelContent.addEventListener('click', async (e) => {
         const target = e.target;
         
@@ -391,7 +946,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     document.querySelectorAll('.tool-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            setMode(btn.dataset.mode);
+            if (btn.dataset.mode) {
+                setMode(btn.dataset.mode);
+            }
         });
     });
     
@@ -409,5 +966,11 @@ document.addEventListener('DOMContentLoaded', () => {
         currentSelectedNodeId = null;
     };
     
+    setupTabNavigation();
+    setupAutoRotate();
+    setupChatPanel();
+    setupNarrativePanel();
+    
     loadGraph();
+    loadClimates();
 });
