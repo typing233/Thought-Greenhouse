@@ -139,3 +139,64 @@ async function getSuggestions(nodeId) {
         body: JSON.stringify(body)
     });
 }
+
+async function getClimates() {
+    return apiRequest('/api/climates');
+}
+
+async function getCurrentClimate() {
+    return apiRequest('/api/climate/current');
+}
+
+async function switchClimate(climateId) {
+    return apiRequest('/api/climate/switch', {
+        method: 'POST',
+        body: JSON.stringify({ climate_id: climateId })
+    });
+}
+
+async function getClimateHistory(limit = 50) {
+    return apiRequest(`/api/climate/history?limit=${limit}`);
+}
+
+async function parseChatIntent(message) {
+    const body = { message };
+    if (userApiKey) {
+        body.api_key = userApiKey;
+    }
+    return apiRequest('/api/chat/parse', {
+        method: 'POST',
+        body: JSON.stringify(body)
+    });
+}
+
+async function executeChatIntent(intent, nodeIds = []) {
+    const body = { intent, node_ids: nodeIds };
+    if (userApiKey) {
+        body.api_key = userApiKey;
+    }
+    return apiRequest('/api/chat/execute', {
+        method: 'POST',
+        body: JSON.stringify(body)
+    });
+}
+
+async function getEvents(limit = 100) {
+    return apiRequest(`/api/events?limit=${limit}`);
+}
+
+async function generateNarrative() {
+    const body = {};
+    if (userApiKey) {
+        body.api_key = userApiKey;
+    }
+    return apiRequest('/api/narrative/generate', {
+        method: 'POST',
+        body: JSON.stringify(body)
+    });
+}
+
+async function exportMarkdown() {
+    const params = userApiKey ? `?api_key=${encodeURIComponent(userApiKey)}` : '';
+    return apiRequest(`/api/export/markdown${params}`);
+}

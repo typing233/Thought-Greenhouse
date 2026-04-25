@@ -24,6 +24,20 @@ class KnowledgeGraphVisualizer {
         this.animationTime = 0;
         this.isAnimating = false;
         
+        this.currentClimate = 'spring';
+        this.climateParticles = null;
+        this.climateLight = null;
+        
+        this.previewNodes = new Set();
+        this.highlightedNodes = new Map();
+        
+        this.isPlaying = false;
+        this.playbackCommands = [];
+        this.currentPlaybackStep = 0;
+        this.playbackTimer = null;
+        
+        this.originalSceneState = null;
+        
         this.init();
     }
     
@@ -63,6 +77,7 @@ class KnowledgeGraphVisualizer {
         this.addLights();
         this.addGrid();
         this.addParticles();
+        this.initClimateEffects();
         this.setupEventListeners();
         this.animate();
     }
@@ -77,6 +92,7 @@ class KnowledgeGraphVisualizer {
         directionalLight.shadow.mapSize.width = 2048;
         directionalLight.shadow.mapSize.height = 2048;
         this.scene.add(directionalLight);
+        this.climateLight = directionalLight;
         
         const pointLight1 = new THREE.PointLight(0x66bb6a, 0.5, 50);
         pointLight1.position.set(-15, 10, -15);
@@ -125,6 +141,78 @@ class KnowledgeGraphVisualizer {
         this.scene.add(this.particles);
     }
     
+    initClimateEffects() {
+        const climateParticleCount = 500;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(climateParticleCount * 3);
+        const colors = new Float32Array(climateParticleCount * 3);
+        
+        for (let i = 0; i < climateParticleCount; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 80;
+            positions[i * 3 + 1] = Math.random() * 40;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 80;
+            
+            const color = new THREE.Color(0x81c784);
+            colors[i * 3] = color.r;
+            colors[i * 3 + 1] = color.g;
+            colors[i * 3 + 2] = color.b;
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const material = new THREE.PointsMaterial({
+            size: 0.1,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.0
+        });
+        
+        this.climateParticles = new THREE.Points(geometry, material);
+        this.scene.add(this.climateParticles);
+    }
+    
+    setClimate(climateType) {
+        this.currentClimate = climateType;
+        
+        const climateColors = {
+            spring: { ambient: 0x81c784, particle: 0xa5d6a7, bg: 0x0f2a1a, fog: 0x0f2a1a },
+            summer: { ambient: 0xffb74d, particle: 0xffcc80, bg: 0x2a1a0f, fog: 0x2a1a0f },
+            autumn: { ambient: 0xff8a65, particle: 0xffab91, bg: 0x2a1a1a, fog: 0x2a1a1a },
+            winter: { ambient: 0x90caf9, particle: 0xbbdefb, bg: 0x0f1a2a, fog: 0x0f1a2a },
+            storm: { ambient: 0xba68c8, particle: 0xce93d8, bg: 0x1a0f2a, fog: 0x1a0f2a },
+            drought: { ambient: 0xa1887f, particle: 0xbcaaa4, bg: 0x2a251f, fog: 0x2a251f }
+        };
+        
+        const climate = climateColors[climateType] || climateColors.spring;
+        
+        this.scene.background = new THREE.Color(climate.bg);
+        this.scene.fog = new THREE.Fog(climate.fog, 30, 80);
+        
+        if (this.climateLight) {
+            this.climateLight.color = new THREE.Color(climate.ambient);
+        }
+        
+        if (this.climateParticles) {
+            const positions = this.climateParticles.geometry.attributes.position.array;
+            const colors = this.climateParticles.geometry.attributes.color.array;
+            const particleColor = new THREE.Color(climate.particle);
+            
+            for (let i = 0; i < colors.length; i += 3) {
+                colors[i] = particleColor.r;
+                colors[i + 1] = particleColor.g;
+                colors[i + 2] = particleColor.b;
+            }
+            this.climateParticles.geometry.attributes.color.needsUpdate = true;
+            
+            this.climateParticles.material.opacity = climateType === 'winter' || climateType === 'storm' ? 0.8 : 0.3;
+        }
+        
+        if (this.onClimateChange) {
+            this.onClimateChange(climateType);
+        }
+    }
+    
     createNodeMesh(nodeData) {
         const group = new THREE.Group();
         group.userData.nodeId = nodeData.id;
@@ -171,6 +259,19 @@ class KnowledgeGraphVisualizer {
         const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
         group.add(glowMesh);
         
+        const previewRingGeometry = new THREE.RingGeometry(size * 1.4, size * 1.6, 32);
+        const previewRingMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffc107,
+            transparent: true,
+            opacity: 0.0,
+            side: THREE.DoubleSide
+        });
+        const previewRing = new THREE.Mesh(previewRingGeometry, previewRingMaterial);
+        previewRing.rotation.x = -Math.PI / 2;
+        previewRing.position.y = -0.1;
+        group.add(previewRing);
+        group.userData.previewRing = previewRing;
+        
         if (nodeData.growth_stage > 0.5) {
             const leafGeometry = new THREE.ConeGeometry(size * 0.3, size * 0.8, 4);
             const leafMaterial = new THREE.MeshPhongMaterial({
@@ -213,6 +314,12 @@ class KnowledgeGraphVisualizer {
         group.userData.mesh = mainMesh;
         group.userData.label = label;
         group.userData.originalColor = new THREE.Color(nodeData.color || 0x4caf50);
+        group.userData.originalScale = new THREE.Vector3(1, 1, 1);
+        group.userData.originalPosition = new THREE.Vector3(
+            nodeData.x || 0,
+            nodeData.y || 0,
+            nodeData.z || 0
+        );
         
         return group;
     }
@@ -317,6 +424,7 @@ class KnowledgeGraphVisualizer {
         this.selectedNode = null;
         this.hoveredNode = null;
         this.selectionBuffer = [];
+        this.previewNodes.clear();
     }
     
     addNode(nodeData) {
@@ -327,10 +435,28 @@ class KnowledgeGraphVisualizer {
         this.nodeMeshes.set(nodeData.id, mesh);
         this.scene.add(mesh);
         
+        this.animateNodeCreation(nodeData.id);
+        
         this.isAnimating = true;
         setTimeout(() => {
             this.isAnimating = false;
         }, 500);
+    }
+    
+    animateNodeCreation(nodeId) {
+        const mesh = this.nodeMeshes.get(nodeId);
+        if (!mesh) return;
+        
+        mesh.scale.set(0, 0, 0);
+        mesh.userData.originalScale = new THREE.Vector3(1, 1, 1);
+        
+        const animate = () => {
+            mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+            if (mesh.scale.x < 0.99) {
+                requestAnimationFrame(animate);
+            }
+        };
+        animate();
     }
     
     updateNode(nodeId, updates) {
@@ -341,9 +467,14 @@ class KnowledgeGraphVisualizer {
         
         const mesh = this.nodeMeshes.get(nodeId);
         if (mesh) {
-            if (updates.x !== undefined) mesh.position.x = updates.x;
-            if (updates.y !== undefined) mesh.position.y = updates.y;
-            if (updates.z !== undefined) mesh.position.z = updates.z;
+            if (updates.x !== undefined || updates.y !== undefined || updates.z !== undefined) {
+                const targetPos = new THREE.Vector3(
+                    updates.x !== undefined ? updates.x : mesh.position.x,
+                    updates.y !== undefined ? updates.y : mesh.position.y,
+                    updates.z !== undefined ? updates.z : mesh.position.z
+                );
+                this.animateNodePosition(nodeId, targetPos);
+            }
             
             if (updates.color) {
                 mesh.userData.originalColor = new THREE.Color(updates.color);
@@ -352,33 +483,84 @@ class KnowledgeGraphVisualizer {
                     mesh.userData.mesh.material.emissive = new THREE.Color(updates.color).multiplyScalar(0.15);
                 }
             }
+            
+            if (updates.status === 'wilting') {
+                this.animateWilting(nodeId);
+            }
         }
+    }
+    
+    animateNodePosition(nodeId, targetPosition) {
+        const mesh = this.nodeMeshes.get(nodeId);
+        if (!mesh) return;
+        
+        const startPos = mesh.position.clone();
+        const duration = 500;
+        const startTime = Date.now();
+        
+        const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            
+            mesh.position.lerpVectors(startPos, targetPosition, eased);
+            
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            } else {
+                const node = this.nodes.get(nodeId);
+                if (node) {
+                    node.x = targetPosition.x;
+                    node.y = targetPosition.y;
+                    node.z = targetPosition.z;
+                }
+            }
+        };
+        animate();
+    }
+    
+    animateWilting(nodeId) {
+        const mesh = this.nodeMeshes.get(nodeId);
+        if (!mesh) return;
+        
+        const animate = () => {
+            mesh.scale.multiplyScalar(0.995);
+            if (mesh.userData.mesh) {
+                mesh.userData.mesh.material.opacity *= 0.995;
+            }
+            if (mesh.scale.x > 0.3) {
+                requestAnimationFrame(animate);
+            }
+        };
+        animate();
     }
     
     removeNode(nodeId) {
         const mesh = this.nodeMeshes.get(nodeId);
         if (mesh) {
-            if (mesh.userData && mesh.userData.label) {
-                const label = mesh.userData.label;
-                if (label.element && label.element.parentNode) {
-                    label.element.parentNode.removeChild(label.element);
-                }
-            }
-            
-            this.scene.remove(mesh);
-            
-            mesh.traverse((child) => {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(m => m.dispose());
-                    } else {
-                        child.material.dispose();
+            this.animateNodeRemoval(nodeId, () => {
+                if (mesh.userData && mesh.userData.label) {
+                    const label = mesh.userData.label;
+                    if (label.element && label.element.parentNode) {
+                        label.element.parentNode.removeChild(label.element);
                     }
                 }
+                
+                this.scene.remove(mesh);
+                
+                mesh.traverse((child) => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(m => m.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                });
+                
+                this.nodeMeshes.delete(nodeId);
             });
-            
-            this.nodeMeshes.delete(nodeId);
         }
         this.nodes.delete(nodeId);
         
@@ -396,6 +578,35 @@ class KnowledgeGraphVisualizer {
         );
     }
     
+    animateNodeRemoval(nodeId, callback) {
+        const mesh = this.nodeMeshes.get(nodeId);
+        if (!mesh) {
+            if (callback) callback();
+            return;
+        }
+        
+        const duration = 300;
+        const startTime = Date.now();
+        const startScale = mesh.scale.clone();
+        
+        const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            mesh.scale.copy(startScale).multiplyScalar(1 - progress);
+            if (mesh.userData.mesh) {
+                mesh.userData.mesh.material.opacity = 1 - progress;
+            }
+            
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            } else {
+                if (callback) callback();
+            }
+        };
+        animate();
+    }
+    
     addEdge(edgeData) {
         const edgeMesh = this.createEdgeMesh(edgeData, this.nodes);
         if (edgeMesh) {
@@ -403,6 +614,54 @@ class KnowledgeGraphVisualizer {
             this.edgeMeshes.push(edgeMesh);
             this.scene.add(edgeMesh);
         }
+    }
+    
+    setPreviewNodes(nodeIds, highlight = true) {
+        this.previewNodes.forEach(nodeId => {
+            const mesh = this.nodeMeshes.get(nodeId);
+            if (mesh && mesh.userData.previewRing) {
+                mesh.userData.previewRing.material.opacity = 0.0;
+            }
+            if (mesh && mesh.userData.mesh) {
+                mesh.userData.mesh.material.emissive = mesh.userData.originalColor.clone().multiplyScalar(0.15);
+            }
+        });
+        
+        this.previewNodes = new Set(nodeIds);
+        
+        if (highlight) {
+            nodeIds.forEach(nodeId => {
+                const mesh = this.nodeMeshes.get(nodeId);
+                if (mesh && mesh.userData.previewRing) {
+                    mesh.userData.previewRing.material.opacity = 0.8;
+                }
+                if (mesh && mesh.userData.mesh) {
+                    mesh.userData.mesh.material.emissive = new THREE.Color(0xffc107).multiplyScalar(0.5);
+                }
+            });
+        }
+    }
+    
+    highlightNodes(nodeIds, color = 0xffc107, intensity = 0.5) {
+        nodeIds.forEach(nodeId => {
+            const mesh = this.nodeMeshes.get(nodeId);
+            if (mesh && mesh.userData.mesh) {
+                this.highlightedNodes.set(nodeId, {
+                    originalEmissive: mesh.userData.mesh.material.emissive.clone()
+                });
+                mesh.userData.mesh.material.emissive = new THREE.Color(color).multiplyScalar(intensity);
+            }
+        });
+    }
+    
+    clearHighlights() {
+        this.highlightedNodes.forEach((data, nodeId) => {
+            const mesh = this.nodeMeshes.get(nodeId);
+            if (mesh && mesh.userData.mesh) {
+                mesh.userData.mesh.material.emissive = data.originalEmissive;
+            }
+        });
+        this.highlightedNodes.clear();
     }
     
     setMode(mode) {
@@ -416,9 +675,10 @@ class KnowledgeGraphVisualizer {
             const isSelected = nodeId === this.selectedNode;
             const isInBuffer = this.selectionBuffer.includes(nodeId);
             const isHovered = nodeId === this.hoveredNode;
+            const isInPreview = this.previewNodes.has(nodeId);
             
             const mainMesh = mesh.userData.mesh;
-            if (mainMesh) {
+            if (mainMesh && !isInPreview) {
                 if (isSelected || isInBuffer || isHovered) {
                     mainMesh.material.emissive = mainMesh.material.color.clone().multiplyScalar(0.4);
                     mesh.scale.set(1.1, 1.1, 1.1);
@@ -528,6 +788,18 @@ class KnowledgeGraphVisualizer {
                     this.onEvolve(nodeId);
                 }
                 break;
+                
+            case 'chat_select':
+                if (this.selectionBuffer.includes(nodeId)) {
+                    this.selectionBuffer = this.selectionBuffer.filter(id => id !== nodeId);
+                } else {
+                    this.selectionBuffer.push(nodeId);
+                }
+                this.setPreviewNodes(this.selectionBuffer);
+                if (this.onChatSelectionUpdate) {
+                    this.onChatSelectionUpdate([...this.selectionBuffer]);
+                }
+                break;
         }
     }
     
@@ -537,6 +809,218 @@ class KnowledgeGraphVisualizer {
         this.updateNodeHighlights();
         if (this.onClearSelection) {
             this.onClearSelection();
+        }
+    }
+    
+    saveSceneState() {
+        this.originalSceneState = {
+            nodes: new Map(),
+            cameraPosition: this.camera.position.clone(),
+            controlsTarget: this.controls.target.clone()
+        };
+        
+        this.nodeMeshes.forEach((mesh, nodeId) => {
+            this.originalSceneState.nodes.set(nodeId, {
+                position: mesh.position.clone(),
+                scale: mesh.scale.clone(),
+                visible: mesh.visible
+            });
+        });
+    }
+    
+    restoreSceneState() {
+        if (!this.originalSceneState) return;
+        
+        this.originalSceneState.nodes.forEach((state, nodeId) => {
+            const mesh = this.nodeMeshes.get(nodeId);
+            if (mesh) {
+                mesh.position.copy(state.position);
+                mesh.scale.copy(state.scale);
+                mesh.visible = state.visible;
+            }
+        });
+        
+        this.camera.position.copy(this.originalSceneState.cameraPosition);
+        this.controls.target.copy(this.originalSceneState.controlsTarget);
+    }
+    
+    startPlayback(commands) {
+        this.playbackCommands = commands;
+        this.currentPlaybackStep = 0;
+        this.isPlaying = true;
+        
+        this.saveSceneState();
+        
+        if (this.onPlaybackStart) {
+            this.onPlaybackStart(commands.length);
+        }
+        
+        this.playNextStep();
+    }
+    
+    playNextStep() {
+        if (!this.isPlaying || this.currentPlaybackStep >= this.playbackCommands.length) {
+            this.stopPlayback();
+            return;
+        }
+        
+        const step = this.playbackCommands[this.currentPlaybackStep];
+        
+        this.executePlaybackStep(step);
+        
+        if (this.onPlaybackStep) {
+            this.onPlaybackStep(this.currentPlaybackStep, this.playbackCommands.length, step);
+        }
+        
+        this.currentPlaybackStep++;
+        
+        if (this.isPlaying) {
+            this.playbackTimer = setTimeout(() => {
+                this.playNextStep();
+            }, (step.duration || 2) * 1000);
+        }
+    }
+    
+    executePlaybackStep(step) {
+        const commands = step.commands || [];
+        
+        commands.forEach(cmd => {
+            switch (cmd.type) {
+                case 'create_node':
+                    const node = this.nodes.get(cmd.node_id);
+                    if (node && cmd.animate) {
+                        const mesh = this.nodeMeshes.get(cmd.node_id);
+                        if (mesh) {
+                            mesh.visible = true;
+                            this.animateNodeCreation(cmd.node_id);
+                        }
+                    }
+                    break;
+                    
+                case 'highlight':
+                    this.highlightNodes(cmd.node_ids, cmd.color || 0x4caf50, 0.6);
+                    break;
+                    
+                case 'animate_hybrid':
+                    this.animateHybridEffect(cmd.parent_a, cmd.parent_b);
+                    break;
+                    
+                case 'create_edge':
+                    if (cmd.source && cmd.target) {
+                        const edgeData = {
+                            source: cmd.source,
+                            target: cmd.target,
+                            relation: 'related',
+                            strength: 1.0
+                        };
+                        this.addEdge(edgeData);
+                    }
+                    break;
+                    
+                case 'climate_effect':
+                    this.setClimate(cmd.climate_type || 'spring');
+                    break;
+                    
+                case 'animate_wilt':
+                    this.animateWilting(cmd.node_id);
+                    break;
+                    
+                case 'remove_node':
+                    this.animateNodeRemoval(cmd.node_id);
+                    break;
+                    
+                case 'focus':
+                    if (cmd.node_id) {
+                        this.focusOnNode(cmd.node_id);
+                    } else if (cmd.position) {
+                        this.animateCameraTo(cmd.position);
+                    }
+                    break;
+            }
+        });
+    }
+    
+    animateHybridEffect(parentA, parentB) {
+        const meshA = this.nodeMeshes.get(parentA);
+        const meshB = this.nodeMeshes.get(parentB);
+        
+        if (meshA && meshB) {
+            const pulse = () => {
+                for (let i = 0; i < 3; i++) {
+                    setTimeout(() => {
+                        if (meshA.userData.mesh) {
+                            meshA.userData.mesh.material.emissive = new THREE.Color(0x9c27b0).multiplyScalar(0.8);
+                        }
+                        if (meshB.userData.mesh) {
+                            meshB.userData.mesh.material.emissive = new THREE.Color(0x9c27b0).multiplyScalar(0.8);
+                        }
+                    }, i * 200);
+                    
+                    setTimeout(() => {
+                        if (meshA.userData.mesh) {
+                            meshA.userData.mesh.material.emissive = meshA.userData.originalColor.clone().multiplyScalar(0.15);
+                        }
+                        if (meshB.userData.mesh) {
+                            meshB.userData.mesh.material.emissive = meshB.userData.originalColor.clone().multiplyScalar(0.15);
+                        }
+                    }, i * 200 + 150);
+                }
+            };
+            pulse();
+        }
+    }
+    
+    animateCameraTo(targetPosition) {
+        const startPos = this.camera.position.clone();
+        const duration = 1000;
+        const startTime = Date.now();
+        
+        const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            
+            this.camera.position.lerpVectors(startPos, new THREE.Vector3(
+                targetPosition.x,
+                targetPosition.y,
+                targetPosition.z
+            ), eased);
+            
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            }
+        };
+        animate();
+    }
+    
+    pausePlayback() {
+        this.isPlaying = false;
+        if (this.playbackTimer) {
+            clearTimeout(this.playbackTimer);
+            this.playbackTimer = null;
+        }
+        if (this.onPlaybackPause) {
+            this.onPlaybackPause();
+        }
+    }
+    
+    resumePlayback() {
+        this.isPlaying = true;
+        this.playNextStep();
+        if (this.onPlaybackResume) {
+            this.onPlaybackResume();
+        }
+    }
+    
+    stopPlayback() {
+        this.isPlaying = false;
+        if (this.playbackTimer) {
+            clearTimeout(this.playbackTimer);
+            this.playbackTimer = null;
+        }
+        this.restoreSceneState();
+        if (this.onPlaybackStop) {
+            this.onPlaybackStop();
         }
     }
     
@@ -589,6 +1073,18 @@ class KnowledgeGraphVisualizer {
                 positions[i + 1] += Math.sin(this.animationTime * 2 + i) * 0.002;
             }
             this.particles.geometry.attributes.position.needsUpdate = true;
+        }
+        
+        if (this.climateParticles && this.currentClimate === 'winter') {
+            const positions = this.climateParticles.geometry.attributes.position.array;
+            for (let i = 0; i < positions.length; i += 3) {
+                positions[i] += Math.sin(this.animationTime + i) * 0.01;
+                positions[i + 1] -= 0.02;
+                if (positions[i + 1] < -5) {
+                    positions[i + 1] = 40;
+                }
+            }
+            this.climateParticles.geometry.attributes.position.needsUpdate = true;
         }
         
         this.controls.update();
